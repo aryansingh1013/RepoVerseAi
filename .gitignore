@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+dist/
+venv/
+.venv/
+env/
+
+# Databases
+db/
+*.db
+*.sqlite
+
+# Cache and generated
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.next/
+.turbo/
+.cache/
+.eslintcache
+
+# Logs
+*.log
+logs/
+
+# IDEs & System
+.vscode/
+.idea/
+.DS_Store
+.agents/
+.gemini/
+.antigravityignore

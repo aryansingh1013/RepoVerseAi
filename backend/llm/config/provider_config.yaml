@@ -1,0 +1,18 @@
+providers:
+  groq:
+    keys: []
+    preferred_key_selection: "round_robin"
+  huggingface:
+    keys: []
+    preferred_key_selection: "round_robin"
+  openai:
+    keys: []
+    preferred_key_selection: "round_robin"
+  gemini:
+    keys: []
+    preferred_key_selection: "round_robin"
+  openrouter:
+    keys: []
+    preferred_key_selection: "round_robin"
+  ollama:
+    endpoint: "http://localhost:11434/v1"

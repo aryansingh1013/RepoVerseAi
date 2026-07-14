@@ -1,0 +1,19 @@
+tasks:
+  repository_summary:
+    provider: "huggingface"
+    model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  chat:
+    provider: "groq"
+    model: "llama-3.3-70b-versatile"
+  code_review:
+    provider: "huggingface"
+    model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  architecture_summary:
+    provider: "huggingface"
+    model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  tool_selection:
+    provider: "groq"
+    model: "llama-3.3-70b-versatile"
+  offline:
+    provider: "ollama"
+    model: "qwen2.5"

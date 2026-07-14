@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+websockets
+chromadb
+langchain
+langchain-community
+langchain-core
+langchain-openai
+langgraph
+sentence-transformers
+mcp
+pydantic
+pydantic-settings
+gitpython
