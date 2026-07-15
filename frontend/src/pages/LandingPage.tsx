@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, Github, Orbit, ChevronRight, Loader2, AlertCircle, Sparkles, Folder, ArrowUp, Home, X } from "lucide-react";
 
-const API = "http://127.0.0.1:8000";
+const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 // ─── Starfield background canvas ─────────────────────────────────────────────
 function Starfield() {

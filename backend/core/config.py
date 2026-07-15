@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     SECONDARY_LLM: str = "Qwen/Qwen2.5-Coder-32B-Instruct"
     FALLBACK_LLM: str = "qwen2.5"  # Local Ollama model
     
-    # Host configuration
-    HOST: str = "127.0.0.1"
-    PORT: int = 8000
+    # Host configuration — 0.0.0.0 is required for Railway/cloud deployments
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+    PORT: int = int(os.getenv("PORT", "8000"))
 
     class Config:
         env_file = ".env"

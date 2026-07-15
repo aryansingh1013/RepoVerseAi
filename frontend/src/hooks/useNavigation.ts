@@ -18,6 +18,10 @@ import type {
   Bookmark,
 } from "@/types";
 
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const WS_BASE = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8000";
+
+
 // ─── Theme Colors (from /api/theme) ──────────────────────────────────────────
 
 export interface ThemeColors {
@@ -308,7 +312,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   // ── Fetch theme from backend on startup
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/api/theme")
+    fetch(`${API_BASE}/api/theme`)
       .then((r) => r.json())
       .then((data) => {
         if (data?.palette) {
@@ -335,7 +339,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const poll = async () => {
       try {
-        const res = await fetch("http://127.0.0.1:8000/api/workspace/status");
+        const res = await fetch(`${API_BASE}/api/workspace/status`);
         if (res.ok) {
           const data = await res.json();
           setWorkspaceStatus(data);
@@ -354,8 +358,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     setIsScanning(true);
     try {
       const [scanRes, summaryRes] = await Promise.all([
-        fetch("http://127.0.0.1:8000/api/scan"),
-        fetch("http://127.0.0.1:8000/api/summary"),
+        fetch(`${API_BASE}/api/scan`),
+        fetch(`${API_BASE}/api/summary`),
       ]);
 
       if (scanRes.ok) {
@@ -434,7 +438,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       const fetchFile = async () => {
         try {
           const res = await fetch(
-            `http://127.0.0.1:8000/api/file?path=${encodeURIComponent(filePath)}`
+            `${API_BASE}/api/file?path=${encodeURIComponent(filePath)}`
           );
           if (!res.ok) return;
           const data = await res.json();
@@ -635,7 +639,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     setAgentSteps([]);
     setIsStreaming(true);
 
-    const ws = new WebSocket("ws://127.0.0.1:8000/ws/chat");
+    const ws = new WebSocket(`${WS_BASE}/ws/chat`);
     const assistantId = `a-${Date.now()}`;
     setSelectedMessageId(assistantId);
 
@@ -704,7 +708,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   // ── Workspace Actions
   const triggerSelectWorkspace = useCallback(async (path: string) => {
     try {
-      await fetch("http://127.0.0.1:8000/api/workspace/select", {
+      await fetch(`${API_BASE}/api/workspace/select`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
@@ -716,7 +720,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   const triggerCloneWorkspace = useCallback(async (url: string) => {
     try {
-      await fetch("http://127.0.0.1:8000/api/clone", {
+      await fetch(`${API_BASE}/api/clone`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_url: url }),
@@ -728,7 +732,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   const triggerIndexWorkspace = useCallback(async () => {
     try {
-      await fetch("http://127.0.0.1:8000/api/index", { method: "POST" });
+      await fetch(`${API_BASE}/api/index`, { method: "POST" });
       setTimeout(refreshScan, 2000);
     } catch (e) {
       console.error("Index error:", e);
