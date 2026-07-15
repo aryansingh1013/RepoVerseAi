@@ -7,13 +7,20 @@ from backend.core.config import settings
 class EmbeddingsManager:
     def __init__(self):
         self.model_name = settings.EMBEDDING_MODEL
-        try:
-            # Load BGE embeddings
-            self.model = SentenceTransformer(self.model_name)
-        except Exception as e:
-            print(f"Failed to load primary embedding model {self.model_name}: {e}")
-            print(f"Falling back to {settings.EMBEDDING_MODEL_FALLBACK}")
-            self.model = SentenceTransformer(settings.EMBEDDING_MODEL_FALLBACK)
+        self._model = None
+
+    @property
+    def model(self):
+        if self._model is None:
+            try:
+                # Load BGE embeddings
+                print(f"Lazy loading embedding model {self.model_name}...")
+                self._model = SentenceTransformer(self.model_name)
+            except Exception as e:
+                print(f"Failed to load primary embedding model {self.model_name}: {e}")
+                print(f"Falling back to {settings.EMBEDDING_MODEL_FALLBACK}")
+                self._model = SentenceTransformer(settings.EMBEDDING_MODEL_FALLBACK)
+        return self._model
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         embeddings = self.model.encode(texts, show_progress_bar=False)
