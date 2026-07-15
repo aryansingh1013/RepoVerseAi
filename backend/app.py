@@ -374,11 +374,54 @@ def browse_directory():
     
     res = result_queue.get()
     if isinstance(res, Exception):
-        raise HTTPException(status_code=500, detail=str(res))
+        import traceback
+        traceback.print_exception(type(res), res, res.__traceback__)
+        raise HTTPException(status_code=500, detail=f"Tkinter error: {type(res).__name__}: {str(res)}")
         
     if res:
         return {"status": "success", "path": os.path.abspath(res)}
     return {"status": "cancelled", "path": None}
+
+@app.get("/api/workspace/list_directories")
+def list_directories(path: Optional[str] = None):
+    """Lists subdirectories of a given path for the web-based folder selector."""
+    try:
+        if not path:
+            # Default to current workspace directory or user home
+            path = settings.WORKSPACE_DIR or os.path.expanduser("~")
+            
+        path = os.path.abspath(path)
+        
+        # Check that path exists, fallback to home directory if not
+        if not os.path.exists(path):
+            path = os.path.expanduser("~")
+            
+        subdirs = []
+        for name in os.listdir(path):
+            full_path = os.path.join(path, name)
+            try:
+                if os.path.isdir(full_path):
+                    # Skip system/hidden folders to keep it clean
+                    if name.startswith(".") or name in {"node_modules", "$RECYCLE.BIN", "System Volume Information"}:
+                        continue
+                    subdirs.append(name)
+            except OSError:
+                continue
+                
+        subdirs.sort(key=str.lower)
+        
+        parent_path = os.path.dirname(path)
+        if parent_path == path:
+            parent_path = None
+            
+        return {
+            "status": "success",
+            "current_path": path,
+            "parent_path": parent_path,
+            "subdirectories": subdirs
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/workspace/select")
 def select_workspace(payload: SelectWorkspaceRequest, background_tasks: BackgroundTasks):

@@ -275,7 +275,7 @@ function GalaxyDisc({ color }: { color: string }) {
 export function FocusBody({ object }: FocusBodyProps) {
   const meshRef   = useRef<THREE.Mesh>(null);
   const cloudRef  = useRef<THREE.Mesh>(null);
-  const { goBack, hover, hoveredId } = useNavigation();
+  const { goBack, hover, hoveredId, setMissionControlOpen } = useNavigation();
   const isHovered = hoveredId === object.id;
 
   const seed = useMemo(() => object.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0), [object.id]);
@@ -293,7 +293,14 @@ export function FocusBody({ object }: FocusBodyProps) {
 
   return (
     <group
-      onClick={(e) => { e.stopPropagation(); if (canAscend) goBack(); }}
+      onClick={(e) => { 
+        e.stopPropagation(); 
+        if (canAscend) {
+          goBack(); 
+        } else {
+          setMissionControlOpen(true);
+        }
+      }}
       onPointerOver={(e) => { e.stopPropagation(); if (canAscend) hover(object.id); }}
       onPointerOut={() => hover(null)}
     >

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Github, Orbit, ChevronRight, Loader2, AlertCircle, Sparkles } from "lucide-react";
+import { FolderOpen, Github, Orbit, ChevronRight, Loader2, AlertCircle, Sparkles, Folder, ArrowUp, Home, X } from "lucide-react";
 
 const API = "http://127.0.0.1:8000";
 
@@ -101,23 +101,40 @@ export function LandingPage() {
       .catch(() => setBackendOnline(false));
   }, []);
 
-  // ── Open local folder via OS dialog
-  const handleBrowse = async () => {
-    setError("");
-    setIsLoading(true);
+  // Web folder browser states
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [browserCurrentPath, setBrowserCurrentPath] = useState("");
+  const [browserParentPath, setBrowserParentPath] = useState<string | null>(null);
+  const [browserSubdirs, setBrowserSubdirs] = useState<string[]>([]);
+  const [browserLoading, setBrowserLoading] = useState(false);
+
+  const fetchDirectories = async (path?: string) => {
+    setBrowserLoading(true);
     try {
-      const res = await fetch(`${API}/api/workspace/browse`);
+      const url = path 
+        ? `${API}/api/workspace/list_directories?path=${encodeURIComponent(path)}`
+        : `${API}/api/workspace/list_directories`;
+      const res = await fetch(url);
       const data = await res.json();
-      if (data.status === "success" && data.path) {
-        setManualPath(data.path);
-      } else if (data.status === "cancelled") {
-        setError("Folder selection cancelled.");
+      if (data.status === "success") {
+        setBrowserCurrentPath(data.current_path);
+        setBrowserParentPath(data.parent_path);
+        setBrowserSubdirs(data.subdirectories);
+      } else {
+        setError("Failed to fetch folder list.");
       }
     } catch {
-      setError("Could not open folder dialog. Is the backend running?");
+      setError("Error communicating with backend.");
     } finally {
-      setIsLoading(false);
+      setBrowserLoading(false);
     }
+  };
+
+  // ── Open local folder via OS dialog
+  const handleBrowse = () => {
+    setError("");
+    setShowFolderBrowser(true);
+    fetchDirectories(manualPath || undefined);
   };
 
   // ── Submit local path
@@ -359,6 +376,115 @@ export function LandingPage() {
           Universe → Galaxy → Constellation → Star (Folder) → Planet (File) → Moon (Function)
         </motion.p>
       </div>
+
+      {/* Web-based Directory Browser Modal */}
+      <AnimatePresence>
+        {showFolderBrowser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#070710]/95 shadow-2xl overflow-hidden flex flex-col max-h-[75vh]"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/5 bg-white/5">
+                <div className="flex items-center gap-2">
+                  <FolderOpen className="h-5 w-5 text-[#A78BFA]" />
+                  <span className="font-display font-semibold text-sm text-white">Browse Local Folders</span>
+                </div>
+                <button
+                  onClick={() => setShowFolderBrowser(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-white/5 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Current Path Area */}
+              <div className="p-4 bg-white/5 border-b border-white/5 flex items-center gap-2">
+                <button
+                  disabled={!browserParentPath || browserLoading}
+                  onClick={() => browserParentPath && fetchDirectories(browserParentPath)}
+                  className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-40 flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                  title="Go to parent directory"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                  Go Up
+                </button>
+                <div className="flex-1 min-w-0 bg-[#030308]/60 border border-[#7C3AED]/20 rounded-lg px-3 py-1.5 text-[11px] font-mono text-slate-300 truncate select-all">
+                  {browserCurrentPath}
+                </div>
+              </div>
+
+              {/* Subdirectories List */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-1 min-h-[240px] max-h-[360px] scrollbar-thin select-none">
+                {browserLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center p-8 text-slate-500 gap-2">
+                    <Loader2 className="h-6 w-6 animate-spin text-[#A78BFA]" />
+                    <span className="text-xs font-mono">Scanning directories…</span>
+                  </div>
+                ) : browserSubdirs.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center p-8 text-slate-500 italic text-xs">
+                    No folders found in this directory.
+                  </div>
+                ) : (
+                  browserSubdirs.map((dirname) => {
+                    return (
+                      <button
+                        key={dirname}
+                        onClick={() => {
+                          const separator = browserCurrentPath.includes("\\") ? "\\" : "/";
+                          const nextPath = browserCurrentPath.endsWith(separator)
+                            ? `${browserCurrentPath}${dirname}`
+                            : `${browserCurrentPath}${separator}${dirname}`;
+                          fetchDirectories(nextPath);
+                        }}
+                        className="w-full flex items-center gap-3 rounded-lg px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5 hover:text-[#A78BFA] transition-all group cursor-pointer"
+                      >
+                        <Folder className="h-4 w-4 text-[#A78BFA]/75 group-hover:text-[#A78BFA] shrink-0" />
+                        <span className="truncate font-mono">{dirname}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-[#7C3AED]/10 bg-white/5 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  onClick={() => {
+                    fetchDirectories(undefined);
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-all cursor-pointer font-mono"
+                  title="Reset to default workspace path"
+                >
+                  <Home className="h-3.5 w-3.5" />
+                  Home
+                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowFolderBrowser(false)}
+                    className="rounded-lg border border-white/10 px-4 py-2 text-xs text-slate-400 hover:bg-white/5 hover:text-white transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      setManualPath(browserCurrentPath);
+                      setShowFolderBrowser(false);
+                    }}
+                    className="rounded-lg bg-[#7C3AED] px-4 py-2 text-xs font-semibold text-white hover:bg-[#6D28D9] transition-all cursor-pointer"
+                  >
+                    Select Current Folder
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,75 +1,117 @@
+"""
+Git Timeline — reads from .git/logs/HEAD and git object store locally, 0 LLM tokens.
+Falls back to a "no git repo" message gracefully.
+"""
+import os
 import subprocess
 from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
+from backend.skills.cache import get_cached, set_cached
+
 
 class GitTimelineSkill(BaseSkill):
     @property
     def name(self) -> str:
-        return "Git Commit Timeline"
+        return "Git Timeline"
 
     @property
     def description(self) -> str:
-        return "Compiles commit chronology sequences and highlights codebase evolution milestones."
+        return "Reads commit history and contributors directly from the local .git store — no LLM required."
 
     @property
     def required_capabilities(self) -> List[str]:
-        return ["git_log"]
+        return ["read_file"]
 
     @property
     def result_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "timeline": {"type": "array", "items": {"type": "object"}},
-                "contributors": {"type": "array", "items": {"type": "object"}}
+                "timeline": {"type": "array"},
+                "contributors": {"type": "array"},
+                "total_commits": {"type": "integer"},
             }
         }
 
     def execute(self, query: str, agent_graph: Any, workspace_dir: str) -> Dict[str, Any]:
-        timeline = []
-        contributors_map = {}
+        cached = get_cached("timeline", workspace_dir)
+        if cached:
+            return cached
 
+        git_dir = os.path.join(workspace_dir, ".git")
+        timeline: List[Dict[str, str]] = []
+        contributors: Dict[str, int] = {}
+
+        if not os.path.exists(git_dir):
+            result = {
+                "timeline": [{"date": "—", "author": "—", "message": "No .git directory found in this workspace."}],
+                "contributors": [],
+                "total_commits": 0,
+            }
+            return result
+
+        # Try running git log via subprocess
         try:
-            # Query git log details using subprocess
-            res = subprocess.run(
-                ["git", "log", "-n", "8", "--pretty=format:%ad|%an|%s", "--date=short"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
+            proc = subprocess.run(
+                ["git", "-C", workspace_dir, "log",
+                 "--pretty=format:%H|%an|%ad|%s",
+                 "--date=short",
+                 "-n", "50"],
+                capture_output=True, text=True, timeout=10
             )
-            
-            for line in res.stdout.strip().split("\n"):
-                if "|" in line:
-                    date, author, msg = line.split("|", 2)
-                    timeline.append({
-                        "date": date,
-                        "author": author,
-                        "message": msg
-                    })
-                    contributors_map[author] = contributors_map.get(author, 0) + 1
-        except Exception:
-            # Fallback mock timeline if not in a git repo
-            timeline = [
-                {"date": "2026-07-10", "author": "Aryan Singh", "message": "Phase 4: Real MCP Servers Integration"},
-                {"date": "2026-07-09", "author": "Aryan Singh", "message": "Phase 3: Cognitive Layer LangGraph Nodes"},
-                {"date": "2026-07-05", "author": "Aryan Singh", "message": "Phase 2: Pluggable Tool Registry System"},
-                {"date": "2026-07-01", "author": "Aryan Singh", "message": "Phase 1: Hybrid RAG ChromaDB & Streamlit UI"},
-                {"date": "2026-06-25", "author": "Aryan Singh", "message": "Project RepoVerse AI initialized landing"}
-            ]
-            contributors_map = {"Aryan Singh": 12, "Deepmind AI Agent": 5}
+            if proc.returncode == 0 and proc.stdout.strip():
+                for line in proc.stdout.strip().split("\n"):
+                    parts = line.split("|", 3)
+                    if len(parts) == 4:
+                        _, author, date, message = parts
+                        timeline.append({
+                            "date": date,
+                            "author": author,
+                            "message": message[:120]
+                        })
+                        contributors[author] = contributors.get(author, 0) + 1
+        except Exception as e:
+            print(f"GitTimeline: git subprocess failed — {e}")
 
-        # Formulate contributors metrics
-        contributors = [
-            {"name": name, "commits": count}
-            for name, count in contributors_map.items()
-        ]
-        contributors.sort(key=lambda x: x["commits"], reverse=True)
+        # Fallback: read .git/logs/HEAD directly
+        if not timeline:
+            head_log = os.path.join(git_dir, "logs", "HEAD")
+            if os.path.exists(head_log):
+                try:
+                    with open(head_log, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()[-50:]
+                    for line in reversed(lines):
+                        parts = line.strip().split("\t", 1)
+                        if len(parts) == 2:
+                            meta, message = parts
+                            meta_parts = meta.split(" ")
+                            author = " ".join(meta_parts[3:-2]) if len(meta_parts) > 5 else "Unknown"
+                            timeline.append({
+                                "date": "—",
+                                "author": author.replace("<", "").split(">")[0].strip(),
+                                "message": message.strip()[:120]
+                            })
+                            contributors[author] = contributors.get(author, 0) + 1
+                except Exception:
+                    pass
 
-        return {
-            "timeline": timeline,
-            "contributors": contributors
+        if not timeline:
+            timeline = [{"date": "—", "author": "—", "message": "Could not read git history."}]
+
+        contributor_list = sorted(
+            [{"name": k, "commits": v} for k, v in contributors.items()],
+            key=lambda x: -x["commits"]
+        )[:10]
+
+        result = {
+            "timeline": timeline[:40],
+            "contributors": contributor_list,
+            "total_commits": len(timeline),
         }
+
+        set_cached("timeline", workspace_dir, result)
+        return result
+
 
 skill_registry.register("timeline", GitTimelineSkill())

@@ -1,7 +1,13 @@
+"""
+Repository Overview — static file-system analysis only, 0 LLM tokens.
+"""
 import os
 from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
+from backend.skills.cache import get_cached, set_cached
+from backend.skills.utils import scan_workspace, read_readme
+
 
 class RepositoryOverviewSkill(BaseSkill):
     @property
@@ -10,7 +16,7 @@ class RepositoryOverviewSkill(BaseSkill):
 
     @property
     def description(self) -> str:
-        return "Automatically profiles tech stack, language metrics, main entry points, and directory layout."
+        return "Profiles tech stack, language metrics, entry points, and directory layout of the active workspace."
 
     @property
     def required_capabilities(self) -> List[str]:
@@ -30,47 +36,82 @@ class RepositoryOverviewSkill(BaseSkill):
         }
 
     def execute(self, query: str, agent_graph: Any, workspace_dir: str) -> Dict[str, Any]:
-        # Scan filesystem for quick fallback overview metrics
-        files = []
-        languages = set()
-        entry_points = []
-        
-        for root, _, filenames in os.walk(workspace_dir):
-            if any(p in root for p in [".git", "node_modules", "__pycache__", "dist", "build"]):
-                continue
-            for f in filenames:
-                ext = os.path.splitext(f)[1]
-                if ext in [".py", ".ts", ".tsx", ".js", ".jsx"]:
-                    files.append(os.path.join(root, f))
-                    if ext == ".py":
-                        languages.add("Python")
-                    if ext in [".ts", ".tsx"]:
-                        languages.add("TypeScript")
-                    if ext in [".js", ".jsx"]:
-                        languages.add("JavaScript")
-                    
-                    # Entry point heuristics
-                    if f in ["app.py", "main.py", "App.tsx", "index.tsx", "server.js"]:
-                        entry_points.append(os.path.relpath(os.path.join(root, f), workspace_dir))
+        # Check cache first
+        cached = get_cached("overview", workspace_dir)
+        if cached:
+            return cached
 
-        # Basic tech stack triggers
-        tech_stack = list(languages)
-        if any("requirements.txt" in f or "pyproject.toml" in f for f in files) or "Python" in languages:
-            tech_stack.extend(["FastAPI", "Uvicorn", "ChromaDB"])
-        if any("package.json" in f for f in files) or "TypeScript" in languages:
-            tech_stack.extend(["React", "Vite", "TailwindCSS"])
+        scan = scan_workspace(workspace_dir)
+        readme = read_readme(workspace_dir)
 
-        summary = f"A hybrid Python and React workspace with {len(files)} codebase files. Centered around a FastAPI backend and a Vite React TS frontend interface."
+        repo_name = scan["repo_name"]
+        lang_summary = ", ".join(f"{l} ({n} files)" for l, n in scan["languages"].items())
+        total = scan["total_files"]
 
-        return {
+        # Derive tech stack from config files found
+        tech_stack = list(scan["languages"].keys())
+        cfg = scan["config_found"]
+        if "package.json" in cfg:
+            tech_stack += ["Node.js"]
+        if "vite.config.ts" in cfg or "vite.config.js" in cfg:
+            tech_stack += ["Vite"]
+        if "tailwind.config.js" in cfg:
+            tech_stack += ["TailwindCSS"]
+        if "tsconfig.json" in cfg:
+            tech_stack += ["TypeScript"]
+        if "requirements.txt" in cfg or "pyproject.toml" in cfg:
+            tech_stack += ["Python (pip)"]
+        if "Cargo.toml" in cfg:
+            tech_stack += ["Rust (Cargo)"]
+        if "go.mod" in cfg:
+            tech_stack += ["Go Modules"]
+        if "docker-compose.yml" in cfg or "Dockerfile" in cfg:
+            tech_stack += ["Docker"]
+        if "next.config.js" in cfg:
+            tech_stack += ["Next.js"]
+
+        # Derive main top-level folders as component overview
+        top_dirs = []
+        try:
+            for entry in sorted(os.listdir(workspace_dir)):
+                if entry.startswith(".") or entry in {"node_modules", "__pycache__", "dist", "build"}:
+                    continue
+                full = os.path.join(workspace_dir, entry)
+                if os.path.isdir(full):
+                    inner_count = sum(
+                        1 for _, _, fnames in os.walk(full) for f in fnames
+                        if not f.startswith(".")
+                    )
+                    top_dirs.append({
+                        "path": f"{entry}/",
+                        "description": f"Contains ~{inner_count} files"
+                    })
+        except Exception:
+            pass
+
+        # Use README first paragraph as the summary if available
+        readme_first = ""
+        if readme:
+            for line in readme.split("\n"):
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    readme_first = line[:300]
+                    break
+
+        summary = readme_first or (
+            f"'{repo_name}' is a {total}-file repository spanning {lang_summary}."
+        )
+
+        result = {
             "summary": summary,
-            "tech_stack": list(set(tech_stack)),
-            "entry_points": entry_points[:5] if entry_points else ["backend/app.py", "frontend/src/main.tsx"],
-            "main_components": ["LangGraph Orchestrator", "ChromaDB Vector Store", "Model Context Protocol Client", "AST Codebase Parser"],
-            "folders_overview": [
-                {"path": "backend/", "description": "FastAPI servers, LangGraph agent loop, RAG retrievers, and plugins"},
-                {"path": "frontend/", "description": "React-TS user interfaces, timeline visualizers, and explorer trees"}
-            ]
+            "tech_stack": list(dict.fromkeys(tech_stack)),
+            "entry_points": scan["entry_points"],
+            "main_components": [d["path"] for d in top_dirs[:8]],
+            "folders_overview": top_dirs[:8],
         }
+
+        set_cached("overview", workspace_dir, result)
+        return result
+
 
 skill_registry.register("overview", RepositoryOverviewSkill())

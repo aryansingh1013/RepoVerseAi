@@ -1,17 +1,56 @@
-import re
+"""
+Security Review — static regex pattern scanning + LLM summary.
+Detects common secrets, dangerous patterns, and missing security headers.
+LLM is invoked once for remediation recommendations (then cached).
+"""
 import os
+import re
 from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
+from backend.skills.cache import get_cached, set_cached
+from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm
+
+
+# Common high-risk patterns to scan for
+SECURITY_PATTERNS = [
+    (r'(?i)(api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*=\s*["\'][^"\']{8,}["\']',
+     "Possible hardcoded secret/API key", "HIGH"),
+    (r'(?i)password\s*=\s*["\'][^"\']+["\']',
+     "Hardcoded password detected", "HIGH"),
+    (r'eval\s*\(',
+     "Use of eval() — potential code injection vector", "HIGH"),
+    (r'exec\s*\(',
+     "Use of exec() — potential code injection vector", "HIGH"),
+    (r'subprocess\.call\(.+shell\s*=\s*True',
+     "shell=True in subprocess — command injection risk", "HIGH"),
+    (r'os\.system\s*\(',
+     "os.system() call — prefer subprocess with explicit args", "MEDIUM"),
+    (r'(?i)sql\s*=.*\%s|sql\s*=.*format\(',
+     "Possible SQL string formatting — use parameterised queries", "MEDIUM"),
+    (r'pickle\.loads?\s*\(',
+     "pickle.load — can execute arbitrary code on untrusted data", "MEDIUM"),
+    (r'assert\s+.+,',
+     "assert used for validation — disabled by -O flag, use proper checks", "LOW"),
+    (r'DEBUG\s*=\s*True',
+     "DEBUG=True — ensure this is not deployed to production", "MEDIUM"),
+    (r'(?i)cors.*allow.*origin.*\*',
+     "CORS wildcard origin detected — restrict in production", "MEDIUM"),
+    (r'http://(?!127\.0\.0\.1|localhost)',
+     "Plain HTTP URL (not localhost) — prefer HTTPS", "LOW"),
+]
+
+CODE_EXTS = {".py", ".js", ".ts", ".jsx", ".tsx", ".env", ".yaml", ".yml", ".json", ".sh"}
+
 
 class SecurityReviewSkill(BaseSkill):
     @property
     def name(self) -> str:
-        return "Security Auditor"
+        return "Security Review"
 
     @property
     def description(self) -> str:
-        return "Audits files for API key leaks, credentials patterns, command-injection risks, and unsafe imports."
+        return "Scans the codebase for hardcoded secrets, dangerous patterns, and common vulnerabilities."
 
     @property
     def required_capabilities(self) -> List[str]:
@@ -22,70 +61,93 @@ class SecurityReviewSkill(BaseSkill):
         return {
             "type": "object",
             "properties": {
-                "vulnerabilities": {"type": "array", "items": {"type": "object"}}
+                "vulnerabilities": {"type": "array"},
+                "summary": {"type": "string"},
             }
         }
 
     def execute(self, query: str, agent_graph: Any, workspace_dir: str) -> Dict[str, Any]:
-        vulnerabilities = []
+        cached = get_cached("security", workspace_dir)
+        if cached:
+            return cached
 
-        # API secrets / Key leaks regex patterns
-        secrets_patterns = [
-            r"(?:key|secret|token|password|auth|private)\s*=\s*['\"][A-Za-z0-9_\-\.\=\+]{8,}['\"]",
-            r"(?:sk-proj-|gsk_)[A-Za-z0-9_\-]{20,}"
-        ]
+        vulns: List[Dict[str, str]] = []
 
-        # Scan codebase
-        for root, _, filenames in os.walk(workspace_dir):
-            if any(p in root for p in [".git", "node_modules", "__pycache__", "dist", "build"]):
-                continue
-            for f in filenames:
-                ext = os.path.splitext(f)[1]
-                if ext in [".py", ".ts", ".tsx", ".json"]:
-                    file_path = os.path.join(root, f)
-                    rel_path = os.path.relpath(file_path, workspace_dir)
-                    
-                    try:
-                        with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
-                            content = file.read()
-                            
-                            # 1. API key checks
-                            for pattern in secrets_patterns:
-                                matches = re.findall(pattern, content, re.IGNORECASE)
-                                for match in matches:
-                                    # Ignore mock token matches or settings placeholders
-                                    if "gsk_..." not in match and "sk-proj-..." not in match:
-                                        vulnerabilities.append({
-                                            "severity": "CRITICAL",
-                                            "file": rel_path,
-                                            "issue": f"Possible API token/key leak pattern: '{match[:30]}...'",
-                                            "remediation": "Move keys out of code files and inject them dynamically via OS environment variables."
-                                        })
-
-                            # 2. Command execution checks
-                            if ext == ".py" and "subprocess.run" in content and "shell=True" in content:
-                                vulnerabilities.append({
-                                    "severity": "HIGH",
-                                    "file": rel_path,
-                                    "issue": "Subprocess shell invocation with shell=True is active, risking shell command injection.",
-                                    "remediation": "Call processes as lists parameters: subprocess.run(['cmd', 'arg']) with shell=False."
+        for root, dirs, files in os.walk(workspace_dir):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+            for fname in files:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in CODE_EXTS:
+                    continue
+                # Never scan actual .env files for secrets (they're supposed to have them)
+                if fname in {".env", ".env.local", ".env.production"}:
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, workspace_dir).replace("\\", "/")
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    for line_num, line in enumerate(content.split("\n"), 1):
+                        for pattern, message, severity in SECURITY_PATTERNS:
+                            if re.search(pattern, line):
+                                vulns.append({
+                                    "severity": severity,
+                                    "file": f"{rel}:{line_num}",
+                                    "issue": message,
+                                    "remediation": _remediation(message),
                                 })
-                    except Exception:
-                        pass
+                                if len(vulns) >= 40:
+                                    break
+                        if len(vulns) >= 40:
+                            break
+                except Exception:
+                    pass
+                if len(vulns) >= 40:
+                    break
 
-        # Standard heuristics fallbacks
-        if not vulnerabilities:
-            vulnerabilities = [
-                {
-                    "severity": "LOW",
-                    "file": "backend/app.py",
-                    "issue": "FastAPI CORS origins are wildcard configured ('*') allowing standard cross-site queries.",
-                    "remediation": "Explicitly configure origins to include designated client hosts in production environment deployments."
-                }
-            ]
+        high = sum(1 for v in vulns if v["severity"] == "HIGH")
+        medium = sum(1 for v in vulns if v["severity"] == "MEDIUM")
+        low = sum(1 for v in vulns if v["severity"] == "LOW")
 
-        return {
-            "vulnerabilities": vulnerabilities
+        # LLM for a brief summary (small, ~800 token prompt, cached afterwards)
+        issue_text = f"{high} high, {medium} medium, {low} low severity issues."
+        schema_hint = '{"summary": "string"}'
+        llm_result = analyze_with_llm(
+            "security",
+            f"write a 2-sentence security posture summary for a repository with {issue_text}",
+            schema_hint,
+            workspace_dir,
+        )
+        summary = llm_result.get("summary", f"Found {len(vulns)} potential security issues ({issue_text}).")
+
+        result = {
+            "vulnerabilities": vulns,
+            "summary": summary,
         }
+
+        set_cached("security", workspace_dir, result)
+        return result
+
+
+def _remediation(message: str) -> str:
+    remediations = {
+        "secret": "Move to environment variable or secrets manager.",
+        "password": "Use environment variable; never hardcode credentials.",
+        "eval": "Avoid eval(); use literal_eval or a safe alternative.",
+        "exec": "Avoid exec(); refactor to function calls.",
+        "shell=True": "Replace with shell=False and pass args as a list.",
+        "os.system": "Replace with subprocess.run(['cmd', 'arg'], check=True).",
+        "SQL": "Use parameterised queries / ORM to prevent SQL injection.",
+        "pickle": "Use JSON or a safe serialisation format for untrusted data.",
+        "assert": "Replace with explicit if/raise statements.",
+        "DEBUG": "Set DEBUG=False and use environment-based config.",
+        "CORS": "Restrict CORS origins to known domains.",
+        "HTTP": "Use HTTPS for all external URLs.",
+    }
+    for key, val in remediations.items():
+        if key.lower() in message.lower():
+            return val
+    return "Review this pattern and apply appropriate security controls."
+
 
 skill_registry.register("security", SecurityReviewSkill())

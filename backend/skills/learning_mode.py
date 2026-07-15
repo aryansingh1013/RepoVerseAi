@@ -1,6 +1,14 @@
+"""
+Learning Mode — LLM-generated onboarding lessons based on the actual repo.
+Called once, cached permanently.
+~1100 tokens per first run.
+"""
 from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
+from backend.skills.cache import get_cached, set_cached
+from backend.skills.utils import analyze_with_llm, scan_workspace
+
 
 class LearningModeSkill(BaseSkill):
     @property
@@ -9,7 +17,7 @@ class LearningModeSkill(BaseSkill):
 
     @property
     def description(self) -> str:
-        return "Teaches developers the codebase layout via structured lessons and interactive quizzes."
+        return "Generates beginner-friendly onboarding lessons and a quiz about the active repository."
 
     @property
     def required_capabilities(self) -> List[str]:
@@ -20,48 +28,42 @@ class LearningModeSkill(BaseSkill):
         return {
             "type": "object",
             "properties": {
-                "lessons": {"type": "array", "items": {"type": "object"}},
-                "quiz": {"type": "array", "items": {"type": "object"}}
+                "lessons": {"type": "array"},
+                "quiz": {"type": "array"},
             }
         }
 
     def execute(self, query: str, agent_graph: Any, workspace_dir: str) -> Dict[str, Any]:
-        lessons = [
-            {
-                "title": "Onboarding overview & space theme",
-                "content": "RepoVerse is structured around a space theme. The codebase hierarchy is mapped to celestial elements: All Repositories is the Universe, the active repository is a Galaxy, folders are Stars, files are Planets, and functions/classes are Moons. The UI visualizes this map alongside AI engineering chat capabilities."
-            },
-            {
-                "title": "Cognitive reasoning layers & state graph",
-                "content": "The backend utilizes LangGraph to create a 10-node StateGraph routing architecture. The query flows through an Intent Classifier, Goal Analyzer, Task Decomposer (which builds topological subtask dependency maps), Parallel Executor, Result Fusion, Self-Reflection Check, and a grounding Verification node."
-            },
-            {
-                "title": "Model Context Protocol & plugins registry",
-                "content": "The agent interacts with the OS via dynamic plugins registering local Python scripts (like git_mcp and terminal_mcp) and connection managers spawning standard daemon subprocesses (Filesystem MCP, GitHub API MCP, and Playwright Browser MCP) exchanging stdio JSON-RPC payloads."
-            }
-        ]
+        cached = get_cached("learning", workspace_dir)
+        if cached:
+            return cached
 
-        quiz = [
-            {
-                "question": "Which space element corresponds to a FILE in RepoVerse AI?",
-                "options": ["Galaxy", "Star", "Planet", "Moon"],
-                "answer": "Planet"
-            },
-            {
-                "question": "What is the primary node orchestration engine in RepoVerse?",
-                "options": ["LangChain RAG", "LangGraph StateGraph", "Uvicorn REST APIs", "React flow canvases"],
-                "answer": "LangGraph StateGraph"
-            },
-            {
-                "question": "How do official MCP servers connect to our agent?",
-                "options": ["Via database schemas", "Spawning daemon subprocesses communicating via stdio streams", "Direct HTTP polling", "Third-party cloud gateways"],
-                "answer": "Spawning daemon subprocesses communicating via stdio streams"
-            }
-        ]
+        scan = scan_workspace(workspace_dir)
+        schema_hint = (
+            '{"lessons": [{"title": "string", "content": "string"}], '
+            '"quiz": [{"question": "string", "options": ["string"], "answer": "string"}]}'
+        )
 
-        return {
-            "lessons": lessons,
-            "quiz": quiz
-        }
+        result = analyze_with_llm(
+            "learning",
+            (
+                "create 3 beginner-friendly onboarding lessons for a new developer joining this project. "
+                "Each lesson must have a `title` and `content` (3-4 sentences). "
+                "Also create 3 multiple-choice quiz questions (4 options each) with a correct `answer`."
+            ),
+            schema_hint,
+            workspace_dir,
+            scan,
+        )
+
+        if "error" in result or not result.get("lessons"):
+            result = {
+                "lessons": [{"title": "Getting Started", "content": f"This repository '{scan['repo_name']}' contains {scan['total_files']} source files. Explore the directory structure to understand the codebase layout."}],
+                "quiz": [{"question": "What is the primary language of this repo?", "options": list(scan["languages"].keys())[:4] or ["Unknown"], "answer": list(scan["languages"].keys())[0] if scan["languages"] else "Unknown"}]
+            }
+
+        set_cached("learning", workspace_dir, result)
+        return result
+
 
 skill_registry.register("learning", LearningModeSkill())

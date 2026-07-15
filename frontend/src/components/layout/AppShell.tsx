@@ -4,6 +4,7 @@ import { TopNavbar } from "./TopNavbar";
 import { LeftSidebar } from "./LeftSidebar";
 import { RightPanel } from "./RightPanel";
 import { ChatBotPanel } from "./ChatBotPanel";
+import { SkillsOverlay } from "./SkillsOverlay";
 import { Sparkles } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
 
@@ -16,7 +17,8 @@ export function AppShell({ children }: AppShellProps) {
     isMissionControlOpen,
     setMissionControlOpen,
     displayedId,
-    spaceGraph
+    spaceGraph,
+    showSkillsPanel
   } = useNavigation();
 
   // Find root ID dynamically
@@ -51,6 +53,21 @@ export function AppShell({ children }: AppShellProps) {
               <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-4xl z-20 pointer-events-none">
                 <TopNavbar />
               </div>
+
+              {/* Skills Panel Overlay */}
+              <AnimatePresence>
+                {showSkillsPanel && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute inset-0 pointer-events-none"
+                  >
+                    <SkillsOverlay />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Lower Part: Integrated Chatbot Panel */}
@@ -86,6 +103,21 @@ export function AppShell({ children }: AppShellProps) {
           <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-4xl z-20 pointer-events-none">
             <TopNavbar />
           </div>
+
+          {/* Skills Panel Overlay (Fullscreen) */}
+          <AnimatePresence>
+            {showSkillsPanel && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className="absolute inset-0 max-w-5xl mx-auto pointer-events-none"
+              >
+                <SkillsOverlay />
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Floating AI Orb at bottom center */}
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">

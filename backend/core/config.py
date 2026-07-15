@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 env_path = os.path.join(backend_dir, ".env")
 if os.path.exists(env_path):
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(dotenv_path=env_path, override=True)
 else:
-    load_dotenv()
+    load_dotenv(override=True)
+
 
 class Settings(BaseSettings):
     # App Paths

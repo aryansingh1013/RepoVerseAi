@@ -1,6 +1,14 @@
+"""
+Architecture Analyzer — LLM-powered with condensed workspace skeleton.
+Called once, cached permanently until user clears cache.
+~1100 tokens per first run.
+"""
 from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
+from backend.skills.cache import get_cached, set_cached
+from backend.skills.utils import analyze_with_llm, scan_workspace
+
 
 class ArchitectureAnalyzerSkill(BaseSkill):
     @property
@@ -9,7 +17,7 @@ class ArchitectureAnalyzerSkill(BaseSkill):
 
     @property
     def description(self) -> str:
-        return "Generates system architecture layer descriptions and Mermaid structural diagrams."
+        return "Generates system architecture layer descriptions and a Mermaid structural diagram for the active repo."
 
     @property
     def required_capabilities(self) -> List[str]:
@@ -27,33 +35,40 @@ class ArchitectureAnalyzerSkill(BaseSkill):
         }
 
     def execute(self, query: str, agent_graph: Any, workspace_dir: str) -> Dict[str, Any]:
-        description = "The application implements a decoupled Frontend-Backend pattern: React-Vite handles interactive timeline UI blocks, while a FastAPI server coordinates cognitive planning, AST parsing, and ChromaDB vector queries."
+        cached = get_cached("architecture", workspace_dir)
+        if cached:
+            return cached
 
-        layers = [
-            {"name": "Frontend View Layer", "description": "Vite + TailwindCSS + Lucide Icons rendering files trees, chat consoles, and connection pings."},
-            {"name": "REST & WebSocket Layer", "description": "FastAPI uvicorn gateway routing requests, handling configuration updates, and streaming tokens over WebSockets."},
-            {"name": "Orchestration & Reasoning Layer", "description": "LangGraph state machine implementing Topological planners, Executors, and Grounding verification checkpoints."},
-            {"name": "Plugin / MCP Connection Layer", "description": "Stdio Connection Manager lifecycle-managing subprocess servers (Filesystem, Playwright, Git, Terminal)."},
-            {"name": "Database & Parsing Layer", "description": "ChromaDB vector embedding store and AST chunker extractors profiling code hierarchy."}
-        ]
+        scan = scan_workspace(workspace_dir)
+        schema_hint = (
+            '{"description": "string", '
+            '"layers": [{"name": "string", "description": "string"}], '
+            '"diagram": "mermaid_graph_string"}'
+        )
 
-        diagram = """graph TD
-    UI[Frontend UI React] -->|REST/WebSockets| API[FastAPI Server Gateway]
-    API -->|invoke| Graph[LangGraph State Machine]
-    Graph -->|Planner Node| Planner[Goal & Task Decomposer]
-    Planner -->|Execute| Exec[Parallel Executor Pool]
-    Exec -->|MCP Call| Manager[MCP Subprocess Manager]
-    Manager -->|stdio jsonrpc| FS[Filesystem MCP]
-    Manager -->|stdio jsonrpc| Play[Browser Playwright MCP]
-    Manager -->|Python wrapper| Git[Git MCP]
-    Manager -->|Python wrapper| Term[Secure Terminal MCP]
-    API -->|queries| DB[(ChromaDB Vector Store)]
-"""
+        result = analyze_with_llm(
+            "architecture",
+            (
+                "identify the main architectural layers of this repository and produce: "
+                "1) a `description` (2 sentences), "
+                "2) a `layers` array (up to 6 layers, each with `name` and `description`), "
+                "3) a `diagram` field containing a valid Mermaid `graph TD` diagram of the layers."
+            ),
+            schema_hint,
+            workspace_dir,
+            scan,
+        )
 
-        return {
-            "description": description,
-            "layers": layers,
-            "diagram": diagram
-        }
+        if "error" in result:
+            # Fallback if LLM failed
+            result = {
+                "description": f"Architecture analysis of '{scan['repo_name']}' could not be completed. Please check your LLM configuration.",
+                "layers": [{"name": "Source Files", "description": f"{scan['total_files']} files detected."}],
+                "diagram": "graph TD\n  A[Repository] --> B[Source Files]"
+            }
+
+        set_cached("architecture", workspace_dir, result)
+        return result
+
 
 skill_registry.register("architecture", ArchitectureAnalyzerSkill())

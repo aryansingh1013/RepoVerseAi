@@ -1,6 +1,14 @@
+"""
+README Generator — LLM-powered, uses real README + workspace scan.
+Called once, cached permanently.
+~1200 tokens per first run (includes existing README text as context).
+"""
 from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
+from backend.skills.cache import get_cached, set_cached
+from backend.skills.utils import analyze_with_llm, scan_workspace, read_readme, build_workspace_skeleton
+
 
 class ReadmeGeneratorSkill(BaseSkill):
     @property
@@ -9,7 +17,7 @@ class ReadmeGeneratorSkill(BaseSkill):
 
     @property
     def description(self) -> str:
-        return "Generates standard professional production manuals and setups docs for the workspace."
+        return "Auto-generates or improves a README.md for the active repository."
 
     @property
     def required_capabilities(self) -> List[str]:
@@ -25,46 +33,46 @@ class ReadmeGeneratorSkill(BaseSkill):
         }
 
     def execute(self, query: str, agent_graph: Any, workspace_dir: str) -> Dict[str, Any]:
-        markdown = """# RepoVerse AI - Developer Space Station
+        cached = get_cached("readme", workspace_dir)
+        if cached:
+            return cached
 
-Welcome to RepoVerse AI, an intelligent agentic workspace platform. RepoVerse combines AST parsers, vector indexes, dynamic subprocess connections, and parallel LangGraph node execution streams into a single workspace panel.
+        from backend.llm.model_router import model_router
 
-## 🚀 Setup & Startup Manual
+        scan = scan_workspace(workspace_dir)
+        existing_readme = read_readme(workspace_dir)
+        skeleton = build_workspace_skeleton(workspace_dir, scan)
 
-### 1. Backend API Host Startup
-Verify Python 3.10+ is active.
-```bash
-pip install -r requirements.txt
-python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
-```
+        existing_section = ""
+        if existing_readme:
+            existing_section = f"\n=== Existing README (use as input, improve it) ===\n{existing_readme[:1500]}"
 
-### 2. Frontend React Panel Development
-Install Node npm nodes dependencies.
-```bash
-cd frontend
-npm install
-npm run dev
-```
+        system_message = (
+            "You are a technical writer generating a professional README.md. "
+            "Respond with ONLY the raw Markdown content — no JSON, no code fences around the whole response."
+        )
+        user_message = (
+            f"Generate a comprehensive, well-structured README.md for this repository.\n"
+            f"Include sections: Project Overview, Features, Tech Stack, Installation, Usage, Project Structure, Contributing.\n"
+            f"Make it accurate and specific to THIS repository — do not use generic placeholder text.\n\n"
+            f"=== Repository Context ===\n{skeleton}{existing_section}"
+        )
 
-## 🌌 System Architecture Map
+        response = model_router.generate(
+            task="analysis",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0.3,
+            json_mode=False,
+        )
 
-```
-React Views App (Vite)
-  └── REST / WebSockets Connection
-       └── FastAPI Backend Gateway
-            └── LangGraph Planners & Sorters
-                 └── Parallel Executor
-                      └── Local Git / Terminal MCP
-```
+        markdown = response.response or f"# {scan['repo_name']}\n\nREADME generation failed. Please check your LLM configuration."
 
-## 🩺 Active Capabilities
-*   **AST Code Parser**: Recursively walks folders to identify symbols.
-*   **Cognitive Flow Engine**: 10-node StateGraph resolves compound engineering goals.
-*   **Model Context Protocol**: Connects Filesystem, GitHub, Git, and Browser subprocesses.
-"""
+        result = {"markdown": markdown}
+        set_cached("readme", workspace_dir, result)
+        return result
 
-        return {
-            "markdown": markdown
-        }
 
 skill_registry.register("readme", ReadmeGeneratorSkill())

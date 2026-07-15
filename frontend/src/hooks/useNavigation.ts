@@ -223,6 +223,8 @@ interface NavigationContextValue {
   // AI Orb / Mission Control
   isMissionControlOpen: boolean;
   setMissionControlOpen: (open: boolean) => void;
+  showSkillsPanel: boolean;
+  setShowSkillsPanel: (open: boolean) => void;
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   input: string;
@@ -274,6 +276,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   // AI Chat / Mission Control
   const [isMissionControlOpen, setMissionControlOpen] = useState(false);
+  const [showSkillsPanel, setShowSkillsPanel] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -750,6 +753,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       themeColors,
       isMissionControlOpen,
       setMissionControlOpen,
+      showSkillsPanel,
+      setShowSkillsPanel,
       messages,
       setMessages,
       input,
@@ -773,7 +778,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     [
       spaceGraph, focusId, breadcrumbs, displayedId, hoveredId, isTransitioning,
       navigateTo, goBack, jumpTo, reportArrived, refreshScan, isScanning, themeColors,
-      isMissionControlOpen, messages, input, isStreaming, agentSteps, activeStep,
+      isMissionControlOpen, showSkillsPanel, messages, input, isStreaming, agentSteps, activeStep,
       submitMessage, selectedMessageId, activeFileContent, activeFileDetails,
       workspaceStatus, triggerSelectWorkspace, triggerCloneWorkspace, triggerIndexWorkspace,
       repositories, recentFiles, bookmarks,

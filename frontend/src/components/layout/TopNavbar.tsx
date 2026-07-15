@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Bell, Orbit, History, FolderGit2, Settings, RefreshCw, LogOut } from "lucide-react";
+import { Orbit, Settings, RefreshCw, LogOut, Cpu } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
 
 export function TopNavbar() {
   const navigate = useNavigate();
-  const { workspaceStatus, triggerIndexWorkspace, isScanning } = useNavigation();
+  const { 
+    workspaceStatus, 
+    triggerIndexWorkspace, 
+    isScanning,
+    showSkillsPanel,
+    setShowSkillsPanel
+  } = useNavigation();
   const [showSettings, setShowSettings] = useState(false);
 
   return (
@@ -31,6 +37,19 @@ export function TopNavbar() {
           <LogOut className="h-3.5 w-3.5" />
           Change Workspace
         </button>
+
+        <button
+          onClick={() => setShowSkillsPanel(!showSkillsPanel)}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors cursor-pointer ${
+            showSkillsPanel 
+              ? "bg-[#7C3AED]/20 text-[#A78BFA] border border-[#7C3AED]/30" 
+              : "text-mist-300 hover:bg-void-700/60 hover:text-mist-100"
+          }`}
+        >
+          <Cpu className="h-3.5 w-3.5" />
+          Agent Skills
+        </button>
+
         <button
           disabled={isScanning}
           onClick={() => triggerIndexWorkspace()}
@@ -74,3 +93,4 @@ export function TopNavbar() {
     </header>
   );
 }
+

@@ -1,16 +1,26 @@
+"""
+Health Analyzer — static AST code-quality checks + optional LLM summary.
+The bulk of the analysis is done with Python (0 tokens). The LLM is only
+used to produce a one-paragraph recommendations summary (cached afterwards).
+"""
 import os
+import ast
+import re
 from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
+from backend.skills.cache import get_cached, set_cached
+from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm
+
 
 class HealthAnalyzerSkill(BaseSkill):
     @property
     def name(self) -> str:
-        return "Repository Health Analyzer"
+        return "Health Analyzer"
 
     @property
     def description(self) -> str:
-        return "Inspects files line counts, scans functions/classes complexities, dead imports, and calculates overall codebase score."
+        return "Scans for code quality issues (long functions, bare excepts, TODOs) and scores the repository."
 
     @property
     def required_capabilities(self) -> List[str]:
@@ -21,85 +31,98 @@ class HealthAnalyzerSkill(BaseSkill):
         return {
             "type": "object",
             "properties": {
-                "score": {"type": "integer"},
-                "issues": {"type": "array", "items": {"type": "object"}},
-                "recommendations": {"type": "array", "items": {"type": "string"}}
+                "score": {"type": "number"},
+                "issues": {"type": "array"},
+                "recommendations": {"type": "array"},
             }
         }
 
     def execute(self, query: str, agent_graph: Any, workspace_dir: str) -> Dict[str, Any]:
-        issues = []
-        recommendations = []
-        score = 92 # Initial default base score
+        cached = get_cached("health", workspace_dir)
+        if cached:
+            return cached
 
-        # Walk workspace to inspect file lines counts
-        large_files = []
-        missing_docstrings = []
-        total_files = 0
+        issues: List[Dict[str, str]] = []
 
-        for root, _, filenames in os.walk(workspace_dir):
-            if any(p in root for p in [".git", "node_modules", "__pycache__", "dist", "build", ".agents"]):
-                continue
-            for f in filenames:
-                ext = os.path.splitext(f)[1]
-                if ext in [".py", ".ts", ".tsx"]:
-                    total_files += 1
-                    file_path = os.path.join(root, f)
-                    rel_path = os.path.relpath(file_path, workspace_dir)
-                    
-                    try:
-                        with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
-                            lines = file.readlines()
-                            line_count = len(lines)
-                            
-                            # Heuristic: file > 250 lines gets checked
-                            if line_count > 250:
-                                large_files.append((rel_path, line_count))
-                            
-                            # Heuristic: Python file missing docstrings at file start
-                            if ext == ".py" and line_count > 10:
-                                content_strip = "".join(lines[:5]).strip()
-                                if '"""' not in content_strip and "'''" not in content_strip:
-                                    missing_docstrings.append(rel_path)
-                    except Exception:
-                        pass
+        for root, dirs, files in os.walk(workspace_dir):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, workspace_dir).replace("\\", "/")
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        source = f.read()
+                    lines = source.split("\n")
 
-        # Formulate health alerts list
-        for path, count in large_files[:3]:
-            score -= 3
-            issues.append({
-                "severity": "MEDIUM",
-                "file": path,
-                "message": f"File contains {count} lines. Large modules should be split into smaller helper modules."
-            })
-            recommendations.append(f"Refactor and decouple logic inside large file '{path}'")
+                    # Long lines
+                    for i, line in enumerate(lines, 1):
+                        if len(line) > 120:
+                            issues.append({"severity": "LOW", "file": f"{rel}:{i}", "message": "Line exceeds 120 characters."})
+                            if len(issues) > 60:
+                                break
 
-        for path in missing_docstrings[:4]:
-            score -= 1
-            issues.append({
-                "severity": "LOW",
-                "file": path,
-                "message": "File is missing top-level module documentation or structural docstring comments."
-            })
-            recommendations.append(f"Add module structural documentation and explain capabilities in '{path}'")
+                    # TODOs / FIXMEs
+                    for i, line in enumerate(lines, 1):
+                        if re.search(r"\b(TODO|FIXME|HACK|XXX)\b", line, re.IGNORECASE):
+                            issues.append({"severity": "LOW", "file": f"{rel}:{i}", "message": f"Found TODO/FIXME marker: {line.strip()[:80]}"})
 
-        # Heuristic check for package configuration
-        if not os.path.exists(os.path.join(workspace_dir, "backend", "requirements.txt")) and not os.path.exists(os.path.join(workspace_dir, "requirements.txt")):
-            score -= 4
-            issues.append({
-                "severity": "HIGH",
-                "file": "Workspace Root",
-                "message": "Missing python dependencies specification (requirements.txt)."
-            })
-            recommendations.append("Generate a requirements.txt file listing python pip dependencies.")
+                    tree = ast.parse(source)
+                    for node in ast.walk(tree):
+                        # Bare except
+                        if isinstance(node, ast.ExceptHandler) and node.type is None:
+                            issues.append({"severity": "MEDIUM", "file": rel, "message": "Bare `except:` clause catches all exceptions — use specific types."})
 
-        # Ensure score bounds
-        score = max(30, min(100, score))
+                        # Long functions (> 80 lines)
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            length = (node.end_lineno or node.lineno) - node.lineno
+                            if length > 80:
+                                issues.append({"severity": "MEDIUM", "file": rel, "message": f"Function `{node.name}` is {length} lines long — consider breaking it up."})
 
-        return {
+                        # Missing docstrings on public functions
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            if not node.name.startswith("_") and not ast.get_docstring(node):
+                                issues.append({"severity": "LOW", "file": rel, "message": f"Public function `{node.name}` has no docstring."})
+
+                except Exception:
+                    pass
+
+        # Clamp issue list and compute score
+        issues = issues[:50]
+        high = sum(1 for i in issues if i["severity"] == "HIGH")
+        medium = sum(1 for i in issues if i["severity"] == "MEDIUM")
+        low = sum(1 for i in issues if i["severity"] == "LOW")
+        penalty = high * 10 + medium * 4 + low * 1
+        score = max(0, min(100, 100 - penalty))
+
+        # Quick LLM call for recommendations only (condensed prompt)
+        scan = scan_workspace(workspace_dir)
+        issue_summary = f"{high} high, {medium} medium, {low} low severity issues found."
+        schema_hint = '{"recommendations": ["string"]}'
+        recs_result = analyze_with_llm(
+            "health",
+            f"provide 5 concise refactoring recommendations for a repository with score {score}/100 and {issue_summary}",
+            schema_hint,
+            workspace_dir,
+            scan,
+        )
+        recommendations = recs_result.get("recommendations", [
+            "Review bare except blocks and add proper exception handling.",
+            "Add docstrings to all public functions.",
+            "Break up functions longer than 80 lines.",
+            "Resolve all TODO/FIXME markers.",
+            "Enforce a linting tool (pylint, ruff, or eslint)."
+        ])
+
+        result = {
             "score": score,
             "issues": issues,
-            "recommendations": list(set(recommendations)) if recommendations else ["Keep maintaining excellent modularity!"]
+            "recommendations": recommendations[:6],
         }
+
+        set_cached("health", workspace_dir, result)
+        return result
+
 
 skill_registry.register("health", HealthAnalyzerSkill())
