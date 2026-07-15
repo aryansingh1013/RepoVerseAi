@@ -28,25 +28,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global instances
-parser = GalaxyParser()
-vector_store = VectorStore()
-retriever = HybridRetriever(vector_store)
-chunk_builder = ChunkBuilder()  # Singleton – avoids recreating splitters on every index
+# Global instances — wrapped in try/except so startup errors don't prevent port binding
+try:
+    parser = GalaxyParser()
+    vector_store = VectorStore()
+    retriever = HybridRetriever(vector_store)
+    chunk_builder = ChunkBuilder()
+except Exception as _e:
+    print(f"WARNING: Core components failed to init: {_e}")
+    parser = None
+    vector_store = None
+    retriever = None
+    chunk_builder = None
 
-mcp_registry = MCPServerRegistry()
-tool_loader = DynamicToolLoader(mcp_registry)
-# Dynamically scan and load plugins
-tool_loader.load_plugins()
+try:
+    mcp_registry = MCPServerRegistry()
+    tool_loader = DynamicToolLoader(mcp_registry)
+    tool_loader.load_plugins()
+    from backend.mcp.connection_manager import MCPConnectionManager
+    mcp_manager = MCPConnectionManager(mcp_registry)
+    mcp_manager.reload_connections()
+    agent_tool_registry = AgentToolRegistry(mcp_registry)
+except Exception as _e:
+    print(f"WARNING: MCP/Agent components failed to init: {_e}")
+    mcp_registry = None
+    tool_loader = None
+    mcp_manager = None
+    agent_tool_registry = None
 
-from backend.mcp.connection_manager import MCPConnectionManager
-mcp_manager = MCPConnectionManager(mcp_registry)
-mcp_manager.reload_connections()
-
-agent_tool_registry = AgentToolRegistry(mcp_registry)
-
-agent_nodes = AgentNodes(retriever, settings.WORKSPACE_DIR, agent_tool_registry)
-agent_graph = create_agent_graph(agent_nodes)
+try:
+    agent_nodes = AgentNodes(retriever, settings.WORKSPACE_DIR, agent_tool_registry)
+    agent_graph = create_agent_graph(agent_nodes)
+except Exception as _e:
+    print(f"WARNING: Agent graph failed to init: {_e}")
+    agent_nodes = None
+    agent_graph = None
 
 # In-memory store for repository summaries and chunks (for BM25 fit)
 indexed_data = {
