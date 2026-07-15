@@ -9,7 +9,7 @@ SETTINGS_FILE = os.path.join(
 
 DEFAULT_SETTINGS = {
     "github_token": os.environ.get("GITHUB_TOKEN", ""),
-    "filesystem_root": os.environ.get("WORKSPACE_DIR", "c:\\Users\\Aryan Singh\\OneDrive\\Desktop\\SUMMERTRAININGPROJECT"),
+    "filesystem_root": "",  # Resolved dynamically if empty or non-existent
     "terminal_safe_mode": True,
     "connection_timeout": 30,
     "refresh_interval": 60
@@ -39,6 +39,14 @@ class MCPSettingsManager:
             print(f"MCPSettings Error: Failed to save settings to file: {e}")
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.settings.get(key, default)
+        val = self.settings.get(key, default)
+        if key == "filesystem_root":
+            if not val or not os.path.exists(val):
+                return os.environ.get(
+                    "WORKSPACE_DIR",
+                    os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+                )
+        return val
 
 mcp_settings = MCPSettingsManager()
+

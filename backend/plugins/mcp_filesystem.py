@@ -15,8 +15,11 @@ class FilesystemMCPServer(MCPSubprocessServer):
     def __init__(self):
         # Retrieve the workspace directory from settings
         root_path = mcp_settings.get("filesystem_root")
-        if not root_path:
-            root_path = os.environ.get("WORKSPACE_DIR", "c:\\Users\\Aryan Singh\\OneDrive\\Desktop\\SUMMERTRAININGPROJECT")
+        if not root_path or not os.path.exists(root_path):
+            root_path = os.environ.get(
+                "WORKSPACE_DIR", 
+                os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+            )
             
         self.root_path = os.path.abspath(root_path)
         self.use_native = False
