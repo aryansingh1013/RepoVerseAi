@@ -1,7 +1,6 @@
 import os
 import chromadb
 from typing import List, Dict, Any, Optional
-from sentence_transformers import SentenceTransformer
 from backend.core.config import settings
 
 class EmbeddingsManager:
@@ -15,10 +14,12 @@ class EmbeddingsManager:
             try:
                 # Load BGE embeddings
                 print(f"Lazy loading embedding model {self.model_name}...")
+                from sentence_transformers import SentenceTransformer
                 self._model = SentenceTransformer(self.model_name)
             except Exception as e:
                 print(f"Failed to load primary embedding model {self.model_name}: {e}")
                 print(f"Falling back to {settings.EMBEDDING_MODEL_FALLBACK}")
+                from sentence_transformers import SentenceTransformer
                 self._model = SentenceTransformer(settings.EMBEDDING_MODEL_FALLBACK)
         return self._model
 
