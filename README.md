@@ -3,10 +3,10 @@ title: RepoVerse AI
 emoji: 🌌
 colorFrom: purple
 colorTo: indigo
-sdk: docker
+sdk: gradio
 app_port: 7860
 pinned: false
-short_description: Explore any GitHub repository as a 3D galaxy universe with AI
+short_description: Explore any GitHub repository as a 3D galaxy with AI
 ---
 
 # 🌌 RepoVerse AI
