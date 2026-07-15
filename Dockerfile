@@ -32,13 +32,14 @@ COPY backend/ ./backend/
 # Copy built React app from Stage 1
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
-# HF Spaces requires port 7860
-ENV PORT=7860
-ENV HOST=0.0.0.0
-
 # Create workspace dir for cloned repos
 RUN mkdir -p /app/workspace
 
-EXPOSE 7860
+# Render injects PORT at runtime — default to 10000 if not set
+ENV HOST=0.0.0.0
 
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "7860"]
+# Expose the default Render port (actual port comes from $PORT at runtime)
+EXPOSE 10000
+
+# Use shell form so $PORT env var is expanded at runtime
+CMD ["sh", "-c", "uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-10000}"]
