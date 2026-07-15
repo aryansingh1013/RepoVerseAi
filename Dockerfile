@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 
 # Copy backend source
 COPY backend/ ./backend/
+COPY app.py ./app.py
 
 # Create workspace dir for cloned repos
 RUN mkdir -p /app/workspace
@@ -23,5 +24,5 @@ ENV PYTHONUNBUFFERED=1
 # Expose the default Render port
 EXPOSE 10000
 
-# Use shell form so $PORT env var is expanded at runtime
-CMD ["sh", "-c", "uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["python", "app.py"]
+
