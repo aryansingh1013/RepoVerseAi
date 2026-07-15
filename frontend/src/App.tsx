@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route } from "react-router-dom";
 import { NavigationProvider } from "@/hooks/useNavigation";
 import { LandingPage } from "@/pages/LandingPage";
 import { IndexingScreen } from "@/pages/IndexingScreen";
@@ -6,7 +6,7 @@ import { WorkspacePage } from "@/pages/WorkspacePage";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <NavigationProvider>
         <Routes>
           {/* Landing: choose workspace or git repo */}
@@ -17,6 +17,6 @@ export default function App() {
           <Route path="/workspace" element={<WorkspacePage />} />
         </Routes>
       </NavigationProvider>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
