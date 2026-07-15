@@ -18,6 +18,7 @@ RUN mkdir -p /app/workspace
 
 # Render injects PORT at runtime — default to 10000 if not set
 ENV HOST=0.0.0.0
+ENV PYTHONUNBUFFERED=1
 
 # Expose the default Render port
 EXPOSE 10000
