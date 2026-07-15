@@ -1,20 +1,4 @@
-# ── Stage 1: Build React frontend ────────────────────────────────────────────
-FROM node:20-slim AS frontend-builder
-
-WORKDIR /app/frontend
-
-# Install dependencies
-COPY frontend/package*.json ./
-RUN npm ci
-
-# Copy source and build
-COPY frontend/ ./
-# Empty VITE_API_URL = relative URLs (same-origin, served by FastAPI)
-ENV VITE_API_URL=""
-ENV VITE_WS_URL=""
-RUN npm run build
-
-# ── Stage 2: Python backend + serve frontend ──────────────────────────────────
+# Backend-only Dockerfile for Render (Free Tier)
 FROM python:3.11-slim
 
 # Install git (needed for GitPython and workspace cloning)
@@ -29,16 +13,13 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 # Copy backend source
 COPY backend/ ./backend/
 
-# Copy built React app from Stage 1
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
-
 # Create workspace dir for cloned repos
 RUN mkdir -p /app/workspace
 
 # Render injects PORT at runtime — default to 10000 if not set
 ENV HOST=0.0.0.0
 
-# Expose the default Render port (actual port comes from $PORT at runtime)
+# Expose the default Render port
 EXPOSE 10000
 
 # Use shell form so $PORT env var is expanded at runtime
