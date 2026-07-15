@@ -698,7 +698,32 @@ async def websocket_chat(websocket: WebSocket):
         except Exception:
             pass
 
+# ── Serve built React frontend (for HF Spaces / production single-container) ──
+import pathlib
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_frontend_dist = pathlib.Path(__file__).parent.parent / "frontend" / "dist"
+
+if _frontend_dist.exists():
+    # Mount static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    async def serve_root():
+        return FileResponse(str(_frontend_dist / "index.html"))
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        """Catch-all to support React Router client-side routing."""
+        # Don't intercept /api/* or /ws/* routes
+        if full_path.startswith("api/") or full_path.startswith("ws/"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404)
+        return FileResponse(str(_frontend_dist / "index.html"))
+
 if __name__ == "__main__":
     import uvicorn
     # Use config port & host
     uvicorn.run("backend.app:app", host=settings.HOST, port=settings.PORT, reload=False)
+

@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 websockets
 chromadb
 langchain
@@ -11,4 +11,11 @@ sentence-transformers
 mcp
 pydantic
 pydantic-settings
+python-dotenv
 gitpython
+httpx
+groq
+openai
+google-generativeai
+requests
+pyyaml

@@ -19,7 +19,10 @@ import type {
 } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
-const WS_BASE = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8000";
+const WS_BASE = import.meta.env.VITE_WS_URL
+  || (typeof window !== "undefined"
+    ? (window.location.protocol === "https:" ? "wss" : "ws") + "://" + window.location.host
+    : "ws://127.0.0.1:8000");
 
 
 // ─── Theme Colors (from /api/theme) ──────────────────────────────────────────
