@@ -6,30 +6,91 @@ from backend.core.config import settings
 class EmbeddingsManager:
     def __init__(self):
         self.model_name = settings.EMBEDDING_MODEL
-        self._model = None
+        self.hf_token = getattr(settings, "HF_TOKEN", "") or os.getenv("HF_TOKEN", "")
+        self._local_model = None
 
-    @property
-    def model(self):
-        if self._model is None:
-            try:
-                # Load BGE embeddings
-                print(f"Lazy loading embedding model {self.model_name}...")
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(self.model_name)
-            except Exception as e:
-                print(f"Failed to load primary embedding model {self.model_name}: {e}")
-                print(f"Falling back to {settings.EMBEDDING_MODEL_FALLBACK}")
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(settings.EMBEDDING_MODEL_FALLBACK)
-        return self._model
+    def _embed_via_hf_api(self, texts: List[str]) -> Optional[List[List[float]]]:
+        """Calls Hugging Face Cloud Inference API (0 MB server RAM usage)."""
+        import requests
+        headers = {}
+        if self.hf_token:
+            headers["Authorization"] = f"Bearer {self.hf_token}"
+            
+        url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{self.model_name}"
+        try:
+            resp = requests.post(url, headers=headers, json={"inputs": texts, "options": {"wait_for_model": True}}, timeout=12)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list) and len(data) == len(texts):
+                    # 3D token array -> mean pooling
+                    if len(data) > 0 and isinstance(data[0], list) and len(data[0]) > 0 and isinstance(data[0][0], list):
+                        pooled = []
+                        for doc_tokens in data:
+                            num_tokens = len(doc_tokens)
+                            dim = len(doc_tokens[0])
+                            vec = [sum(doc_tokens[t][d] for t in range(num_tokens)) / num_tokens for d in range(dim)]
+                            pooled.append(vec)
+                        return pooled
+                    # 2D document array
+                    elif len(data) > 0 and isinstance(data[0], list) and isinstance(data[0][0], (int, float)):
+                        return data
+        except Exception as e:
+            print(f"EmbeddingsManager: HF Inference API failed: {e}")
+        return None
+
+    def _embed_via_gemini(self, texts: List[str]) -> Optional[List[List[float]]]:
+        """Fallback to Gemini embedding API if GEMINI_API_KEY set."""
+        api_key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+        if not api_key:
+            return None
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            result = genai.embed_content(
+                model="models/text-embedding-004",
+                content=texts
+            )
+            if "embedding" in result:
+                emb = result["embedding"]
+                if isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], list):
+                    return emb
+                elif isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], (int, float)):
+                    return [emb]
+        except Exception as e:
+            print(f"EmbeddingsManager: Gemini embedding failed: {e}")
+        return None
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        embeddings = self.model.encode(texts, show_progress_bar=False)
+        if not texts:
+            return []
+
+        # 1. Try Hugging Face Cloud Inference API (0 MB RAM)
+        api_res = self._embed_via_hf_api(texts)
+        if api_res is not None:
+            return api_res
+
+        # 2. Try Gemini Embedding API
+        gemini_res = self._embed_via_gemini(texts)
+        if gemini_res is not None:
+            return gemini_res
+
+        # 3. Fallback to local SentenceTransformer if available
+        if self._local_model is None:
+            try:
+                print("EmbeddingsManager: Falling back to local SentenceTransformer...")
+                from sentence_transformers import SentenceTransformer
+                self._local_model = SentenceTransformer(self.model_name)
+            except Exception as e:
+                print(f"EmbeddingsManager: Local model load failed: {e}")
+                from sentence_transformers import SentenceTransformer
+                self._local_model = SentenceTransformer(settings.EMBEDDING_MODEL_FALLBACK)
+                
+        embeddings = self._local_model.encode(texts, show_progress_bar=False)
         return embeddings.tolist()
 
     def embed_query(self, text: str) -> List[float]:
-        embedding = self.model.encode(text, show_progress_bar=False)
-        return embedding.tolist()
+        res = self.embed_texts([text])
+        return res[0] if res else [0.0] * 384
 
 
 class VectorStore:

@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
 
-const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const API = import.meta.env.VITE_API_URL || "https://web-production-402e7.up.railway.app";
 
 // Helper to render Markdown report dynamically
 function parseMarkdown(md: string) {

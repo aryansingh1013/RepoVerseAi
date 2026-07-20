@@ -84,6 +84,11 @@ class SettingsUpdate(BaseModel):
 class CloneRequest(BaseModel):
     repo_url: str
 
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "message": "RepoVerse AI Backend is healthy"}
+
 @app.get("/api/theme")
 def get_theme():
     return THEME_CONFIG
