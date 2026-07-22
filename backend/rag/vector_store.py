@@ -97,11 +97,15 @@ class VectorStore:
     def __init__(self):
         self.client = chromadb.PersistentClient(path=settings.DB_DIR)
         self.embeddings = EmbeddingsManager()
-        self.collection_name = "repoverse_chunks"
-        
-        # Ensure collection exists
-        self.collection = self.client.get_or_create_collection(
-            name=self.collection_name,
+
+    @property
+    def collection(self):
+        import hashlib
+        # Generate a safe collection name based on the workspace path hash
+        h = hashlib.md5(settings.WORKSPACE_DIR.encode("utf-8")).hexdigest()[:16]
+        collection_name = f"repoverse_chunks_{h}"
+        return self.client.get_or_create_collection(
+            name=collection_name,
             metadata={"hnsw:space": "cosine"} # cosine similarity
         )
 
