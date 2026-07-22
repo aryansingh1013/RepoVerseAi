@@ -7,7 +7,7 @@ import { useNavigation } from "@/hooks/useNavigation";
 
 const ARRIVAL_EPSILON = 0.05;
 /** How quickly the camera eases toward its target — lower = more cinematic drift. */
-const EASE_FACTOR = 2.2;
+const EASE_FACTOR = 6.0;
 
 interface CameraRigProps {
   controlsRef: React.RefObject<OrbitControlsImpl>;

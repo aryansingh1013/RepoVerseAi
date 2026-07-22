@@ -240,10 +240,27 @@ export function OrbitingBody({ object, children }: OrbitingBodyProps) {
     : object.scale;
 
   // Scale hierarchy: Sun (FocusBody) >> Star (Folder) >> Planet (File) >> Moon (Symbol)
-  const meshScale = 
+  // Scale hierarchy: Sun (FocusBody) >> Star (Folder) >> Planet (File) >> Moon (Symbol)
+  let meshScale = 
     object.kind === "star"   ? fileCountScale * 1.6 :
     object.kind === "planet" ? object.scale * 0.8 :
-                               object.scale * 0.22; // moons are a lot smaller!
+                               object.scale * 3.0; // Increased from 1.8 to 3.0 to make moons much bigger!
+
+  const isRed = 
+    object.color?.toLowerCase() === '#ef4444' || 
+    object.color?.toLowerCase() === '#e34c26' || 
+    object.color?.toLowerCase() === '#ff2255' || 
+    object.color?.toLowerCase() === '#ff0000';
+
+  if (isRed) {
+    if (object.kind === "planet") {
+      meshScale = object.scale * 1.2; // Boosted from 0.8 to 1.2
+    } else if (object.kind === "star") {
+      meshScale = fileCountScale * 2.2; // Boosted from 1.6 to 2.2
+    } else if (object.kind === "moon") {
+      meshScale = object.scale * 4.0; // Boosted from 3.0 to 4.0
+    }
+  }
 
   // Geometry radius feeds atmosphere and rings
   const geoRadius =

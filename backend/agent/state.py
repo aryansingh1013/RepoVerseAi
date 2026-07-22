@@ -10,6 +10,7 @@ class AgentState(TypedDict):
     needs_retrieval: bool
     needs_tool: bool
     is_verified: bool
+    out_of_context: bool
     
     # Execution Tracking
     retrieved_contexts: List[Dict[str, Any]]

@@ -18,8 +18,8 @@ import type {
   Bookmark,
 } from "@/types";
 
-const API_BASE = import.meta.env.VITE_API_URL || "https://web-production-402e7.up.railway.app";
-const WS_BASE = import.meta.env.VITE_WS_URL || "wss://web-production-402e7.up.railway.app";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const WS_BASE = import.meta.env.VITE_WS_URL || "ws://localhost:8000";
 
 
 // ─── Theme Colors (from /api/theme) ──────────────────────────────────────────

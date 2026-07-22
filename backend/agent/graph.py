@@ -22,7 +22,20 @@ def create_agent_graph(nodes: AgentNodes) -> StateGraph:
 
     # 2. Setup linear edges
     workflow.set_entry_point("intent_classifier")
-    workflow.add_edge("intent_classifier", "goal_analyzer")
+    
+    def after_intent_routing(state: AgentState) -> str:
+        if state.get("out_of_context", False):
+            return END
+        return "goal_analyzer"
+        
+    workflow.add_conditional_edges(
+        "intent_classifier",
+        after_intent_routing,
+        {
+            "goal_analyzer": "goal_analyzer",
+            END: END
+        }
+    )
     workflow.add_edge("goal_analyzer", "task_decomposer")
     workflow.add_edge("task_decomposer", "planner_v2")
     workflow.add_edge("planner_v2", "retriever")

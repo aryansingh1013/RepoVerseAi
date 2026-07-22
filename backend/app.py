@@ -638,6 +638,7 @@ async def websocket_chat(websocket: WebSocket):
                 "needs_retrieval": False,
                 "needs_tool": False,
                 "is_verified": False,
+                "out_of_context": False,
                 "retrieved_contexts": [],
                 "capability_requests": [],
                 "tool_outputs": [],

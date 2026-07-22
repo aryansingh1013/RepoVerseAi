@@ -282,6 +282,45 @@ class AgentNodes:
 
         query_lower = query.lower()
         
+        # Check if the query is in context of the repo or software development
+        system_prompt = (
+            "You are a repository context classifier. Your job is to determine whether the user's query is relevant to the active project, repository, software development, coding, or system tools.\n"
+            "Decide if the query is in-context or out-of-context.\n"
+            "In-context queries:\n"
+            "- Codebase details, files, folders, architecture, classes, functions, RAG, or MCP tools.\n"
+            "- Programming questions, debugging, syntax questions, or technical concepts related to technologies used (Python, FastAPI, React, TypeScript, Git, etc.).\n"
+            "- Casual greetings, introductions, or basic chatbot interactions (e.g. 'hello', 'who are you', 'help').\n\n"
+            "Out-of-context queries:\n"
+            "- Questions about cooking, recipes, food (e.g. 'how to make pizza', 'recipe of pizza').\n"
+            "- General non-technical knowledge, history, sports, pop culture, creative writing, or off-topic chat.\n\n"
+            "Respond ONLY with a JSON object: {\"in_context\": true} or {\"in_context\": false}"
+        )
+        
+        in_context = True
+        try:
+            response_text = self._call_llm([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Query: {query}"}
+            ], temperature=0.0, json_mode=True, task="chat")
+            
+            if response_text:
+                call_info = json.loads(response_text)
+                in_context = call_info.get("in_context", True)
+        except Exception as e:
+            print(f"WARNING: Context relevance classification failed: {e}")
+            in_context = True
+
+        if not in_context:
+            steps.append("⚠️ Query is Out of Context. Short-circuiting response.")
+            return {
+                **state,
+                "out_of_context": True,
+                "response": "Out of context",
+                "agent_steps": steps,
+                "is_verified": True,
+                "confidence_score": 1.0
+            }
+
         # Retrieval markers
         retrieval_keywords = [
             "find", "search", "where", "how is", "show", "code", "file", 
@@ -302,6 +341,7 @@ class AgentNodes:
             **state,
             "needs_retrieval": needs_retrieval,
             "needs_tool": needs_tool,
+            "out_of_context": False,
             "agent_steps": steps
         }
 

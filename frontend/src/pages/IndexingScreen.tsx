@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Orbit, CheckCircle2, AlertCircle } from "lucide-react";
 
-const API = import.meta.env.VITE_API_URL || "https://web-production-402e7.up.railway.app";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 type StatusState = "cloning" | "indexing" | "ready" | "error";
 
