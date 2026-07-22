@@ -1,9 +1,16 @@
-import { useRef, useEffect } from "react";
-import { Send, Sparkles, ChevronRight, Brain, X } from "lucide-react";
+import { useRef, useEffect, useState } from "react";
+import { Send, Sparkles, ChevronRight, Brain, X, Copy, Check } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
 import { clsx } from "@/utils/clsx";
 
 export function ChatBotPanel() {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleCopy = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
   const {
     messages,
     input,
@@ -110,11 +117,29 @@ export function ChatBotPanel() {
                   <span className="text-[9px] uppercase tracking-wider font-semibold text-mist-500">
                     {isUser ? "Navigator" : "RepoVerse AI"}
                   </span>
-                  {!isUser && msg.confidence !== undefined && (
-                    <span className="text-[8px] font-mono text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded border border-emerald-500/15">
-                      Confidence: {Math.round(msg.confidence * 100)}%
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {!isUser && msg.confidence !== undefined && (
+                      <span className="text-[8px] font-mono text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded border border-emerald-500/15">
+                        Confidence: {Math.round(msg.confidence * 100)}%
+                      </span>
+                    )}
+                    {!isUser && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCopy(msg.text, msg.id);
+                        }}
+                        className="rounded p-1 text-mist-500 hover:text-mist-200 hover:bg-white/5 transition-colors cursor-pointer"
+                        title="Copy message to clipboard"
+                      >
+                        {copiedId === msg.id ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-400 animate-pulse-slow" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Message Text */}

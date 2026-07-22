@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { TopNavbar } from "./TopNavbar";
 import { LeftSidebar } from "./LeftSidebar";
@@ -21,6 +21,69 @@ export function AppShell({ children }: AppShellProps) {
     showSkillsPanel
   } = useNavigation();
 
+  // Resizing state variables (in pixels)
+  const [leftWidth, setLeftWidth] = useState(320);
+  const [rightWidth, setRightWidth] = useState(320);
+  const [chatHeight, setChatHeight] = useState(280);
+
+  // Resize handlers
+  const handleLeftResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = leftWidth;
+    
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      setLeftWidth(Math.max(240, Math.min(600, startWidth + deltaX)));
+    };
+    
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  const handleRightResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = rightWidth;
+    
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      setRightWidth(Math.max(240, Math.min(600, startWidth - deltaX)));
+    };
+    
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  const handleChatResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = chatHeight;
+    
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      setChatHeight(Math.max(150, Math.min(650, startHeight - deltaY)));
+    };
+    
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
   // Find root ID dynamically
   const rootId = spaceGraph.find((o) => o.parentId === null)?.id ?? "galaxy-root";
 
@@ -37,9 +100,15 @@ export function AppShell({ children }: AppShellProps) {
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 120 }}
-            className="w-80 shrink-0 border-r border-white/5 bg-void-900/40 backdrop-blur-md flex flex-col h-full z-10 p-3"
+            style={{ width: leftWidth }}
+            className="relative shrink-0 border-r border-white/5 bg-void-900/40 backdrop-blur-md flex flex-col h-full z-10 p-3"
           >
             <LeftSidebar />
+            {/* Right border resize handle */}
+            <div
+              onMouseDown={handleLeftResize}
+              className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-signal-500/40 active:bg-signal-500/80 transition-colors z-20"
+            />
           </motion.div>
 
           {/* Middle Part (Galaxy Scene + Chatbot Panel) */}
@@ -75,8 +144,14 @@ export function AppShell({ children }: AppShellProps) {
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 120 }}
-              className="h-[38vh] shrink-0 p-3 border-t border-white/5 bg-void-900/50 backdrop-blur-md flex flex-col z-10"
+              style={{ height: chatHeight }}
+              className="relative shrink-0 p-3 border-t border-white/5 bg-void-900/50 backdrop-blur-md flex flex-col z-10"
             >
+              {/* Top border resize handle */}
+              <div
+                onMouseDown={handleChatResize}
+                className="absolute top-0 left-0 w-full h-1 cursor-row-resize hover:bg-signal-500/40 active:bg-signal-500/80 transition-colors z-20"
+              />
               <ChatBotPanel />
             </motion.div>
           </div>
@@ -86,9 +161,15 @@ export function AppShell({ children }: AppShellProps) {
             initial={{ opacity: 0, x: 30 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 120 }}
-            className="w-80 shrink-0 border-l border-white/5 bg-void-900/40 backdrop-blur-md flex flex-col h-full z-10 p-3"
+            style={{ width: rightWidth }}
+            className="relative shrink-0 border-l border-white/5 bg-void-900/40 backdrop-blur-md flex flex-col h-full z-10 p-3"
           >
             <RightPanel />
+            {/* Left border resize handle */}
+            <div
+              onMouseDown={handleRightResize}
+              className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-signal-500/40 active:bg-signal-500/80 transition-colors z-20"
+            />
           </motion.div>
         </div>
       ) : (
