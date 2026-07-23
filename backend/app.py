@@ -246,6 +246,35 @@ def get_file_content(path: str = Query(..., description="Relative path of file t
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def set_active_workspace(target_path: str):
+    target_path = os.path.abspath(target_path)
+    settings.WORKSPACE_DIR = target_path
+    if parser:
+        parser.root_dir = target_path
+    if agent_nodes:
+        agent_nodes.workspace_dir = target_path
+        if hasattr(agent_nodes, "tools") and agent_nodes.tools:
+            agent_nodes.tools.workspace_dir = target_path
+    
+    if mcp_registry:
+        fs_tool = mcp_registry.get_tool("filesystem_mcp")
+        if fs_tool:
+            fs_tool.root_path = target_path
+            if hasattr(fs_tool, "command"):
+                fs_tool.command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", target_path]
+
+    # Persist active workspace path to JSON
+    try:
+        conf_dir = os.path.join(os.path.dirname(__file__), "core")
+        os.makedirs(conf_dir, exist_ok=True)
+        conf_path = os.path.join(conf_dir, "active_workspace.json")
+        import json
+        with open(conf_path, "w", encoding="utf-8") as f:
+            json.dump({"active_workspace": target_path}, f, indent=2)
+        print(f"Workspace persisted successfully: {target_path}")
+    except Exception as e:
+        print(f"Failed to persist workspace setting: {e}")
+
 # Background state manager for workspace switching/cloning
 workspace_status = {
     "status": "ready",  # ready, cloning, indexing, error
@@ -310,19 +339,7 @@ async def bg_clone_and_index(url: str):
         workspace_status["status"] = "indexing"
         target_path = os.path.abspath(local_path)
         
-        # Update settings active workspace
-        settings.WORKSPACE_DIR = target_path
-        parser.root_dir = target_path
-        
-        if hasattr(agent_nodes, "tools"):
-            agent_nodes.tools.workspace_dir = target_path
-        agent_nodes.workspace_dir = target_path
-        
-        fs_tool = mcp_registry.get_tool("filesystem_mcp")
-        if fs_tool:
-            fs_tool.root_path = target_path
-            if hasattr(fs_tool, "command"):
-                fs_tool.command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", target_path]
+        set_active_workspace(target_path)
                 
         # Trigger index
         await index_galaxy()
@@ -341,18 +358,7 @@ async def bg_select_and_index(target_path: str):
     workspace_status["repo_name"] = os.path.basename(target_path)
     
     try:
-        settings.WORKSPACE_DIR = target_path
-        parser.root_dir = target_path
-        
-        if hasattr(agent_nodes, "tools"):
-            agent_nodes.tools.workspace_dir = target_path
-        agent_nodes.workspace_dir = target_path
-        
-        fs_tool = mcp_registry.get_tool("filesystem_mcp")
-        if fs_tool:
-            fs_tool.root_path = target_path
-            if hasattr(fs_tool, "command"):
-                fs_tool.command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", target_path]
+        set_active_workspace(target_path)
                 
         await index_galaxy()
         workspace_status["status"] = "ready"

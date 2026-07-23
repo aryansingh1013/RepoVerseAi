@@ -14,8 +14,26 @@ else:
 
 class Settings(BaseSettings):
     # App Paths
-    WORKSPACE_DIR: str = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    DB_DIR: str = os.path.join(WORKSPACE_DIR, "db")
+    WORKSPACE_DIR: str = ""
+    DB_DIR: str = ""
+    
+    def __init__(self, **values):
+        super().__init__(**values)
+        import json
+        default_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        conf_path = os.path.join(os.path.dirname(__file__), "active_workspace.json")
+        active_ws = None
+        if os.path.exists(conf_path):
+            try:
+                with open(conf_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    val = data.get("active_workspace")
+                    if val and os.path.exists(val):
+                        active_ws = val
+            except Exception:
+                pass
+        self.WORKSPACE_DIR = active_ws or default_root
+        self.DB_DIR = os.path.join(default_root, "db")
     
     # API Keys (Fallback to developer credentials if environment not set)
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY", "")
