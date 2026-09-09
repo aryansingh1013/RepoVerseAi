@@ -1,209 +1,199 @@
+"""Local ChromaDB-backed vector store (default backend).
+
+Post-audit rewrite: the old file hard-coded a dead HF endpoint, an unusable
+zero-vector fallback, and a global collection that could mix dimensionalities
+across providers. Embedding is now delegated to backend.rag.embeddings
+(single pinned provider/model/dim contract), the collection is keyed by that
+fingerprint, and a per-workspace file manifest (hash per path) enables
+incremental re-indexing.
+"""
+
 import os
+import json
+import hashlib
 import chromadb
 from typing import List, Dict, Any, Optional
+
 from backend.core.config import settings
-
-class EmbeddingsManager:
-    def __init__(self):
-        self.model_name = settings.EMBEDDING_MODEL
-        self.hf_token = getattr(settings, "HF_TOKEN", "") or os.getenv("HF_TOKEN", "")
-        self._local_model = None
-
-    def _embed_via_hf_api(self, texts: List[str]) -> Optional[List[List[float]]]:
-        """Calls Hugging Face Cloud Inference API (0 MB server RAM usage)."""
-        import requests
-        headers = {}
-        if self.hf_token:
-            headers["Authorization"] = f"Bearer {self.hf_token}"
-            
-        url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{self.model_name}"
-        try:
-            resp = requests.post(url, headers=headers, json={"inputs": texts, "options": {"wait_for_model": True}}, timeout=12)
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list) and len(data) == len(texts):
-                    # 3D token array -> mean pooling
-                    if len(data) > 0 and isinstance(data[0], list) and len(data[0]) > 0 and isinstance(data[0][0], list):
-                        pooled = []
-                        for doc_tokens in data:
-                            num_tokens = len(doc_tokens)
-                            dim = len(doc_tokens[0])
-                            vec = [sum(doc_tokens[t][d] for t in range(num_tokens)) / num_tokens for d in range(dim)]
-                            pooled.append(vec)
-                        return pooled
-                    # 2D document array
-                    elif len(data) > 0 and isinstance(data[0], list) and isinstance(data[0][0], (int, float)):
-                        return data
-        except Exception as e:
-            print(f"EmbeddingsManager: HF Inference API failed: {e}")
-        return None
-
-    def _embed_via_gemini(self, texts: List[str]) -> Optional[List[List[float]]]:
-        """Fallback to Gemini embedding API if GEMINI_API_KEY set."""
-        api_key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
-        if not api_key:
-            return None
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=texts
-            )
-            if "embedding" in result:
-                emb = result["embedding"]
-                if isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], list):
-                    return emb
-                elif isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], (int, float)):
-                    return [emb]
-        except Exception as e:
-            print(f"EmbeddingsManager: Gemini embedding failed: {e}")
-        return None
-
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        if not texts:
-            return []
-
-        # 1. Try Hugging Face Cloud Inference API (0 MB RAM)
-        api_res = self._embed_via_hf_api(texts)
-        if api_res is not None:
-            return api_res
-
-        # 2. Try Gemini Embedding API
-        gemini_res = self._embed_via_gemini(texts)
-        if gemini_res is not None:
-            return gemini_res
-
-        # 3. Fallback to local SentenceTransformer if available
-        if self._local_model is None:
-            try:
-                print("EmbeddingsManager: Falling back to local SentenceTransformer...")
-                from sentence_transformers import SentenceTransformer
-                self._local_model = SentenceTransformer(self.model_name)
-            except Exception as e:
-                print(f"EmbeddingsManager: Local model load failed: {e}")
-                from sentence_transformers import SentenceTransformer
-                self._local_model = SentenceTransformer(settings.EMBEDDING_MODEL_FALLBACK)
-                
-        embeddings = self._local_model.encode(texts, show_progress_bar=False)
-        return embeddings.tolist()
-
-    def embed_query(self, text: str) -> List[float]:
-        res = self.embed_texts([text])
-        return res[0] if res else [0.0] * 384
+from backend.rag.embeddings import Embeddings
 
 
 class VectorStore:
     def __init__(self):
         self.client = chromadb.PersistentClient(path=settings.DB_DIR)
-        self.embeddings = EmbeddingsManager()
+        self.embeddings = Embeddings()
+
+    # ── keys & naming ─────────────────────────────────────────────────────────
+
+    def _workspace_hash(self) -> str:
+        return hashlib.md5(os.path.abspath(settings.WORKSPACE_DIR).encode("utf-8")).hexdigest()[:16]
+
+    def _collection_name(self) -> str:
+        # Fingerprint suffix isolates dimensionalities: switching embedding
+        # providers yields a NEW (empty) collection instead of a corrupt mix.
+        fp = hashlib.md5(self.embeddings.fingerprint.encode("utf-8")).hexdigest()[:10]
+        return f"repoverse_chunks_{self._workspace_hash()}_{fp}"
 
     @property
     def collection(self):
-        import hashlib
-        # Generate a safe collection name based on the workspace path hash
-        h = hashlib.md5(settings.WORKSPACE_DIR.encode("utf-8")).hexdigest()[:16]
-        collection_name = f"repoverse_chunks_{h}"
         return self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"} # cosine similarity
+            name=self._collection_name(),
+            metadata={"hnsw:space": "cosine"},
         )
 
-    def add_chunks(self, chunks: List[Dict[str, Any]]):
-        """
-        Expects chunk dictionaries:
-        {
-           "content": "str",
-           "metadata": { ... }
-        }
-        """
+    @property
+    def _manifest_path(self) -> str:
+        return os.path.join(settings.DB_DIR, f"index_manifest_{self._workspace_hash()}.json")
+
+    # ── file manifest (incremental index state) ──────────────────────────────
+
+    def file_manifest(self) -> Dict[str, str]:
+        try:
+            with open(self._manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_manifest(self, manifest: Dict[str, str]):
+        try:
+            os.makedirs(settings.DB_DIR, exist_ok=True)
+            with open(self._manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, indent=2)
+        except Exception as e:
+            print(f"VectorStore: manifest save failed: {e}")
+
+    def sync_manifest(self, current_hashes: Dict[str, str]):
+        """Persist the post-index manifest (index_service calls after diffing)."""
+        self._save_manifest(current_hashes)
+
+    def paths_matching(self, suffix: str) -> List[str]:
+        suffix = (suffix or "").strip().lower().lstrip("./\\")
+        if not suffix:
+            return []
+        keys = self.file_manifest().keys()
+        matches = [p for p in keys if p.lower().endswith(suffix)]
+        if matches:
+            return sorted(matches)
+        # Manifest may predate this file; fall back to ids stored in chroma.
+        try:
+            res = self.collection.get(include=[])
+            ids = (res or {}).get("ids") or []
+            paths = {i.rsplit("#", 1)[0] for i in ids}
+            return sorted(p for p in paths if p.lower().endswith(suffix))
+        except Exception:
+            return []
+
+    # ── writes ────────────────────────────────────────────────────────────────
+
+    def upsert_file(self, rel_path: str, chunks: List[Dict[str, Any]], content_hash: str,
+                    mtime: float = 0.0, size: int = 0):
+        """Replace all chunks for one file (embeds internally)."""
+        col = self.collection
+        try:
+            col.delete(where={"path": rel_path})
+        except Exception:
+            pass
         if not chunks:
             return
+        ids, docs, metas = [], [], []
+        for idx, ch in enumerate(chunks):
+            meta = dict(ch.get("metadata", {}))
+            meta["path"] = rel_path
+            meta["imports"] = json.dumps(meta.get("imports", []) or [])
+            meta["exports"] = json.dumps(meta.get("exports", []) or [])
+            ids.append(f"{rel_path}#{idx}")
+            docs.append(ch["content"])
+            metas.append(meta)
+        embeddings = self.embeddings.embed_documents(docs)
+        col.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embeddings)
 
-        ids = []
-        documents = []
-        metadatas = []
-        
-        for idx, chunk in enumerate(chunks):
-            # Unique ID based on path and start line
-            path = chunk["metadata"]["path"]
-            chunk_type = chunk["metadata"]["chunk_type"]
-            start = chunk["metadata"]["start_line"]
-            
-            chunk_id = f"{path}#{chunk_type}#{start}#{idx}"
-            
-            ids.append(chunk_id)
-            documents.append(chunk["content"])
-            
-            # Serialize metadata for ChromaDB (no lists allowed as metadata values)
-            meta = chunk["metadata"].copy()
-            meta["imports"] = json.dumps(meta["imports"]) if isinstance(meta["imports"], list) else str(meta["imports"])
-            meta["exports"] = json.dumps(meta["exports"]) if isinstance(meta["exports"], list) else str(meta["exports"])
-            metadatas.append(meta)
+    def delete_file(self, rel_path: str):
+        try:
+            self.collection.delete(where={"path": rel_path})
+        except Exception as e:
+            print(f"VectorStore: delete_file failed: {e}")
 
-        # Generate embeddings in batches to avoid CPU memory saturation
-        EMBED_BATCH = 32
-        all_embeddings = []
-        for i in range(0, len(documents), EMBED_BATCH):
-            batch = documents[i:i + EMBED_BATCH]
-            all_embeddings.extend(self.embeddings.embed_texts(batch))
-        
-        # Upsert into Chroma
-        self.collection.upsert(
-            ids=ids,
-            embeddings=all_embeddings,
-            documents=documents,
-            metadatas=metadatas
-        )
+    def clear(self):
+        """Drop the collection outright (O(1) vs the old delete-by-ids loop)."""
+        try:
+            self.client.delete_collection(self._collection_name())
+        except Exception:
+            pass
+        try:
+            if os.path.exists(self._manifest_path):
+                os.remove(self._manifest_path)
+        except OSError:
+            pass
+
+    # ── reads ─────────────────────────────────────────────────────────────────
+
+    def count(self) -> int:
+        try:
+            return int(self.collection.count())
+        except Exception:
+            return 0
+
+    def load_all_chunks(self) -> List[Dict[str, Any]]:
+        results = self.collection.get(include=["documents", "metadatas"])
+        out: List[Dict[str, Any]] = []
+        if not results or "documents" not in results:
+            return out
+        docs, metas, ids = results["documents"], results["metadatas"], results["ids"]
+        for i in range(len(docs)):
+            meta = dict(metas[i] or {})
+            for key in ("imports", "exports"):
+                try:
+                    meta[key] = json.loads(meta.get(key, "[]")) if isinstance(meta.get(key), str) else (meta.get(key) or [])
+                except Exception:
+                    meta[key] = []
+            out.append({"id": ids[i], "content": docs[i], "metadata": meta})
+        return out
 
     def search(self, query: str, limit: int = 5, where: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        Semantic search in ChromaDB.
-        """
         query_vector = self.embeddings.embed_query(query)
-        
+
+        chroma_where = None
+        if where:
+            if "paths" in where:
+                paths = where.get("paths") or []
+                if not paths:
+                    return []
+                chroma_where = {"path": {"$in": paths}}
+            else:
+                chroma_where = where
+
         results = self.collection.query(
             query_embeddings=[query_vector],
             n_results=limit,
-            where=where
+            where=chroma_where,
         )
 
-        formatted_results = []
+        formatted: List[Dict[str, Any]] = []
         if results and "documents" in results and results["documents"]:
             docs = results["documents"][0]
-            metas = results["metadatas"][0]
+            metas = results["metadatas"][0] if "metadatas" in results else [{}] * len(docs)
             ids = results["ids"][0]
-            distances = results["distances"][0] if "distances" in results else [0.0] * len(docs)
-
+            distances = results.get("distances", [[0.0] * len(docs)])[0]
             for i in range(len(docs)):
-                meta = metas[i].copy()
-                # Deserialize lists
-                try:
-                    meta["imports"] = json.loads(meta["imports"])
-                except Exception:
-                    pass
-                try:
-                    meta["exports"] = json.loads(meta["exports"])
-                except Exception:
-                    pass
-                
-                formatted_results.append({
+                meta = dict(metas[i] or {})
+                for key in ("imports", "exports"):
+                    try:
+                        meta[key] = json.loads(meta[key]) if isinstance(meta.get(key), str) else meta.get(key, [])
+                    except Exception:
+                        pass
+                formatted.append({
                     "id": ids[i],
                     "content": docs[i],
                     "metadata": meta,
-                    "score": 1.0 - distances[i] # Cosine similarity score
+                    "score": 1.0 - distances[i],  # cosine similarity
                 })
+        return formatted
 
-        return formatted_results
-
-    def clear(self):
-        """
-        Clears all documents from the collection efficiently (IDs only).
-        """
-        try:
-            results = self.collection.get(include=[])  # fetch only IDs, no content
-            if results and "ids" in results and results["ids"]:
-                self.collection.delete(ids=results["ids"])
-        except Exception as e:
-            print(f"VectorStore: Failed to clear collection: {e}")
-import json # Used inside class
+    # Legacy parity: one-shot bulk add without manifest bookkeeping.
+    def add_chunks(self, chunks: List[Dict[str, Any]]):
+        by_file: Dict[str, List[Dict[str, Any]]] = {}
+        for ch in chunks:
+            rel = ch.get("metadata", {}).get("path", "unknown")
+            by_file.setdefault(rel, []).append(ch)
+        for rel, group in by_file.items():
+            self.upsert_file(rel, group, content_hash="")

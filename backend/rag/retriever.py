@@ -15,11 +15,27 @@ class HybridRetriever:
         self.all_chunks = chunks
         self.bm25.fit(chunks)
 
-    def retrieve(self, query: str, limit: int = 5, where_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def retrieve(self, query: str, limit: int = 5, where_filter: Optional[Dict[str, Any]] = None,
+                 path_suffix: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Retrieves top documents using Reciprocal Rank Fusion (RRF) over
         Vector search and BM25 lexical search.
+
+        path_suffix: if given (e.g. "app.py"), resolves against the indexed
+        file manifest and filters BOTH legs to those real relative paths.
+        (Fixes the old exact-match on a bare filename, which could never hit
+        stored relative paths like "backend/app.py" and silently returned 0.)
         """
+        paths: Optional[List[str]] = None
+        if path_suffix:
+            resolver = getattr(self.vector_store, "paths_matching", None)
+            paths = resolver(path_suffix) if callable(resolver) else []
+            if paths is not None and not paths:
+                return []  # nothing indexed matches this filename
+            where_filter = None
+        if paths is not None:
+            where_filter = {"paths": paths}
+
         if not self.all_chunks:
             # Fall back to vector search only if BM25 is not fitted
             return self.vector_store.search(query, limit=limit, where=where_filter)
@@ -34,10 +50,13 @@ class HybridRetriever:
             filtered_bm25 = []
             for doc, score in bm25_results:
                 match = True
-                for k, v in where_filter.items():
-                    if doc.get("metadata", {}).get(k) != v:
-                        match = False
-                        break
+                if paths is not None:
+                    match = doc.get("metadata", {}).get("path") in set(paths)
+                else:
+                    for k, v in where_filter.items():
+                        if doc.get("metadata", {}).get(k) != v:
+                            match = False
+                            break
                 if match:
                     filtered_bm25.append((doc, score))
             bm25_results = filtered_bm25

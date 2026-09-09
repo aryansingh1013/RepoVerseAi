@@ -16,6 +16,16 @@ class Settings(BaseSettings):
     # App Paths
     WORKSPACE_DIR: str = ""
     DB_DIR: str = ""
+
+    # Vector store backend: "chroma" (local, default) or "supabase" (pgvector)
+    VECTOR_BACKEND: str = os.getenv("VECTOR_BACKEND", "chroma")
+    SUPABASE_URL: Optional[str] = os.getenv("SUPABASE_URL", "")
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+    # Embedding provider ("auto" = first configured of openai/huggingface/gemini/local).
+    # Target dimensionality; providers that cannot satisfy it are skipped or error.
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "auto")
+    EMBEDDING_DIMENSIONS: Optional[int] = int(os.getenv("EMBEDDING_DIMENSIONS", "384") or 0) or None
     
     def __init__(self, **values):
         super().__init__(**values)

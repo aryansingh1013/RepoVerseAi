@@ -357,16 +357,16 @@ class AgentNodes:
         steps.append("🔍 Fetching code snippets via Hybrid Vector+BM25...")
         
         # Simple extraction of filters (e.g. if query mentions a specific file)
-        where_filter = None
-        file_match = re.search(r"in\s+([a-zA-Z0-9_\-\.\/]+)", query, re.IGNORECASE)
+        # Resolved against the indexed file manifest (suffix match) — a bare
+        # filename like "app.py" now correctly matches stored relative paths
+        # like "backend/app.py".
+        path_suffix = None
+        file_match = re.search(r"([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)", query)
         if file_match:
-            filename = file_match.group(1)
-            # Try to filter by path if it looks like a filename
-            if "." in filename:
-                where_filter = {"path": filename}
-                steps.append(f"Applying metadata path filter: {filename}")
+            path_suffix = file_match.group(1)
+            steps.append(f"Filtering retrieval to files matching: {path_suffix}")
 
-        retrieved = self.retriever.retrieve(query, limit=5, where_filter=where_filter)
+        retrieved = self.retriever.retrieve(query, limit=5, path_suffix=path_suffix)
         
         steps.append(f"Retrieved {len(retrieved)} relevant codebase chunks.")
         

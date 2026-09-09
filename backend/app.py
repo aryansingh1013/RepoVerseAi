@@ -15,8 +15,9 @@ from backend.core.config import settings
 from backend.core.theme import THEME_CONFIG
 from backend.parser.galaxy_parser import GalaxyParser
 from backend.parser.chunk_builder import ChunkBuilder
-from backend.rag.vector_store import VectorStore
+from backend.rag.store_factory import create_vector_store
 from backend.rag.retriever import HybridRetriever
+from backend.rag import index_service
 from backend.agent.nodes import AgentNodes
 from backend.agent.graph import create_agent_graph
 from backend.mcp.registry import MCPServerRegistry
@@ -50,7 +51,7 @@ app.add_middleware(
 # Global instances — wrapped in try/except so startup errors don't prevent port binding
 try:
     parser = GalaxyParser()
-    vector_store = VectorStore()
+    vector_store = create_vector_store()
     retriever = HybridRetriever(vector_store)
     chunk_builder = ChunkBuilder()
 except Exception as _e:
@@ -122,110 +123,61 @@ def scan_galaxy():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/index", dependencies=[Depends(require_trusted_client)])
-async def index_galaxy():
-    """Indexes the active codebase (Galaxy) into ChromaDB and BM25."""
-    # Allowed source-code extensions only (skip binaries, images, lock files)
-    ALLOWED_EXTENSIONS = {
-        ".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".md",
-        ".yaml", ".yml", ".toml", ".txt", ".html", ".css",
-        ".prisma", ".sql", ".sh", ".env.example", ".graphql",
-        ".go", ".rs", ".java", ".c", ".cpp", ".h"
-    }
-    MAX_FILE_BYTES = 150_000  # Skip files larger than 150KB (binary/generated)
-    EXCLUDE_DIRS = {
-        ".git", "__pycache__", "node_modules", ".gemini",
-        "venv", ".venv", "db", "dist", "build", ".agents",
-        ".vscode", ".idea", ".next", ".turbo"
-    }
-    EXCLUDE_FILES = {
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-        ".gitignore", ".env", "tsconfig.tsbuildinfo"
-    }
+async def index_galaxy(force: bool = Query(False, description="Full rebuild (clear store first)")):
+    """Incrementally indexes the active workspace into the vector store (Chroma
+    or Supabase/pgvector per VECTOR_BACKEND) and re-fits BM25.
 
-    def sync_index():
-        workspace = settings.WORKSPACE_DIR
+    Content-hash manifest: only new/changed files are re-chunked and
+    re-embedded; removed files are deleted from the index. (Replaces the old
+    cache short-circuit that could serve a stale index forever.)"""
+    if vector_store is None or chunk_builder is None or retriever is None:
+        raise HTTPException(status_code=503, detail="Core components failed to initialize; cannot index.")
 
-        # 1. Fast direct walk – collect file paths without re-reading files
-        file_paths = []
-        for root, dirs, files in os.walk(workspace):
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-            for file in files:
-                if file in EXCLUDE_FILES:
-                    continue
-                _, ext = os.path.splitext(file)
-                if ext.lower() not in ALLOWED_EXTENSIONS:
-                    continue
-                full = os.path.join(root, file)
-                try:
-                    if os.path.getsize(full) > MAX_FILE_BYTES:
-                        continue
-                except OSError:
-                    continue
-                file_paths.append(full)
+    if force:
+        vector_store.clear()
 
-        # 2. Build chunks using the singleton builder
-        all_chunks = []
-        for file_path in file_paths:
-            chunks = chunk_builder.build_chunks(file_path, workspace)
-            all_chunks.extend(chunks)
-
-        # 3. Check if collection already has chunks and we can skip re-embedding
-        count = vector_store.collection.count()
-        use_cache = False
-        if count > 0:
-            # Check if the cache matches the current workspace
-            sample = vector_store.collection.get(limit=1, include=['metadatas'])
-            if sample and sample.get('metadatas') and sample['metadatas'][0]:
-                sample_path = sample['metadatas'][0].get('path')
-                full_sample_path = os.path.join(workspace, sample_path)
-                if os.path.exists(full_sample_path):
-                    use_cache = True
-
-        if use_cache:
-            print(f"VectorStore: Found {count} cached chunks matching workspace. Loading cache.")
-            results = vector_store.collection.get(include=['documents', 'metadatas'])
-            all_chunks = []
-            if results and 'documents' in results:
-                docs = results['documents']
-                metas = results['metadatas']
-                ids = results['ids']
-                for idx in range(len(docs)):
-                    meta = metas[idx].copy()
-                    try:
-                        import json
-                        meta["imports"] = json.loads(meta["imports"]) if isinstance(meta["imports"], str) else meta["imports"]
-                        meta["exports"] = json.loads(meta["exports"]) if isinstance(meta["exports"], str) else meta["exports"]
-                    except Exception:
-                        pass
-                    all_chunks.append({
-                        "id": ids[idx],
-                        "content": docs[idx],
-                        "metadata": meta
-                    })
-            retriever.fit_bm25(all_chunks)
-        else:
-            print("VectorStore: No valid cache found. Re-indexing.")
-            vector_store.clear()
-            if all_chunks:
-                vector_store.add_chunks(all_chunks)
-                retriever.fit_bm25(all_chunks)
-        indexed_data["chunks"] = all_chunks
-
-        # 4. Generate lightweight heuristics summary (no LLM call)
-        summary = parser.generate_heuristics_summary()
+    def run_sync():
+        stats = index_service.sync_index(
+            workspace=settings.WORKSPACE_DIR,
+            store=vector_store,
+            chunk_builder=chunk_builder,
+            retriever=retriever,
+        )
+        summary = parser.generate_heuristics_summary() if parser else {}
         indexed_data["summary"] = summary
-
-        return summary, len(all_chunks), len(file_paths)
+        indexed_data["chunks"] = []
+        return stats, summary
 
     try:
         loop = asyncio.get_event_loop()
-        summary, num_chunks, num_files = await loop.run_in_executor(None, sync_index)
+        stats, summary = await loop.run_in_executor(None, run_sync)
 
-        return {
-            "status": "success",
-            "message": f"Successfully indexed {num_chunks} chunks from {num_files} files.",
-            "summary": summary
+        # Fatal case: files pending but every embed failed (e.g. no embedding
+        # provider configured). Report the real cause instead of fake success.
+        if stats["errors"] and stats["added"] + stats["updated"] == 0 and stats.get("pending"):
+            raise HTTPException(
+                status_code=503,
+                detail=stats["errors"][0].split(": ", 1)[-1],
+            )
+
+        if stats["added"] + stats["updated"] + stats["removed"] == 0 and stats["chunks"] > 0:
+            message = f"Index up to date ({stats['chunks']} chunks over {stats['files']} files). Nothing to re-embed."
+        else:
+            message = (
+                f"Indexed {stats['added']} new, {stats['updated']} changed, "
+                f"{stats['removed']} removed files ({stats['chunks']} chunks total)."
+            )
+        resp = {
+            "status": "success" if not stats["errors"] else "partial",
+            "message": message,
+            "stats": stats,
+            "summary": summary,
         }
+        if stats["errors"]:
+            resp["warnings"] = stats["errors"]
+        return resp
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -371,8 +323,8 @@ async def bg_clone_and_index(url: str, repo_name: str = ""):
         
         set_active_workspace(target_path)
                 
-        # Trigger index
-        await index_galaxy()
+        # Trigger index (incremental; workspace change already flips the manifest namespace)
+        await index_galaxy(force=False)
         
         workspace_status["status"] = "ready"
         workspace_status["current_path"] = target_path
@@ -389,8 +341,8 @@ async def bg_select_and_index(target_path: str):
     
     try:
         set_active_workspace(target_path)
-                
-        await index_galaxy()
+
+        await index_galaxy(force=False)
         workspace_status["status"] = "ready"
         workspace_status["current_path"] = target_path
     except Exception as e:

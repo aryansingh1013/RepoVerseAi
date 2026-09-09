@@ -7,7 +7,7 @@ langchain-community
 langchain-core
 langchain-openai
 langgraph
-sentence-transformers
+# sentence-transformers moved to backend/requirements-local.txt (optional local mode).
 mcp
 pydantic
 pydantic-settings
@@ -20,3 +20,4 @@ google-generativeai
 requests
 pyyaml
 langchain-text-splitters
+supabase

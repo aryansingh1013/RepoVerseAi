@@ -1,0 +1,8 @@
+# Optional extras for LOCAL embedding mode (no API keys needed).
+# Install with:  pip install -r backend/requirements-local.txt
+#
+# Without these, configure OPENAI_API_KEY (recommended, text-embedding-3-small)
+# or HF_TOKEN (free tier, BAAI/bge-small-en-v1.5 @384) and embeddings run
+# server-side.
+sentence-transformers>=3.0
+google-genai        # optional: Gemini embeddings (gemini-embedding-001 via the new SDK)

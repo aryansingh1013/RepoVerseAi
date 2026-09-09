@@ -54,6 +54,35 @@ SUMMERTRAININGPROJECT/
 
 ---
 
+## 🗄️ Embeddings & Vector Store (v2 — post-audit)
+
+Embeddings use **one pinned (provider, model, dimensions) contract per deployment** — no
+zero-vector fallbacks, no mixed dimensionalities (see `docs/embedding_stack_audit.md`):
+
+| Provider (auto-order) | Model | Dims | Env needed |
+|---|---|---|---|
+| OpenAI | `text-embedding-3-small` | 1536 (or 256/512/1024 truncation) | `OPENAI_API_KEY` |
+| Hugging Face router | `BAAI/bge-small-en-v1.5` | 384 | `HF_TOKEN` |
+| Google | `gemini-embedding-001` | 3072→truncations | `GEMINI_API_KEY` + `pip install google-genai` |
+| Local | sentence-transformers | model-native | `pip install -r backend/requirements-local.txt` |
+
+**Store backend** is chosen by `VECTOR_BACKEND`:
+- `chroma` (default) — local `db/` via ChromaDB + on-disk file manifest. Indexing is
+  **incremental** (sha1 per file; only new/changed files re-embedded, deleted files pruned).
+- `supabase` — Postgres + pgvector; run `backend/sql/schema.sql` in your Supabase project and
+  set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`. Chunks, per-file hashes, index-run and
+  telemetry/analytics tables live in Postgres (survives redeploys; multi-tenant-ready).
+
+Changing `EMBEDDING_PROVIDER`/`EMBEDDING_DIMENSIONS` is safe: the store fingerprints the
+combination and automatically clears & rebuilds instead of corrupting vectors.
+
+```bash
+# from repo root — minimal local run (no keys): index with local embeddings
+pip install -r requirements.txt -r backend/requirements-local.txt
+# recommended for deployments (cheap, no torch in the image):
+#   set OPENAI_API_KEY or HF_TOKEN in backend/.env, skip requirements-local.txt
+```
+
 ## 🚀 Quick Start Guide
 
 ### Prerequisites
