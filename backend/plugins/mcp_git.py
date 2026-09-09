@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 from typing import List, Dict, Any
@@ -65,18 +66,39 @@ class GitMCPServer(IMCPServer):
     def health(self) -> Dict[str, Any]:
         return {"status": "healthy"}
 
+    @staticmethod
+    def _safe_rel_path(file_path) -> str:
+        """Constrain git path args to workspace-relative, non-option paths."""
+        from backend.mcp.config import mcp_settings
+        from backend.core.security import resolve_within
+
+        root = mcp_settings.get("filesystem_root", None)
+        path = str(file_path or "").strip()
+        if not path or path.startswith("-"):
+            raise PermissionError("Invalid file path for git operation.")
+        if root:
+            resolved = resolve_within(root, path)
+            path = os.path.relpath(resolved, root)
+        return path
+
     def _run_git_command(self, args: List[str]) -> str:
         try:
+            from backend.mcp.config import mcp_settings
+            root = mcp_settings.get("filesystem_root", None)
             res = subprocess.run(
-                ["git"] + args,
+                ["git"] + [str(a) for a in args],
+                cwd=root or None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                check=True
+                check=True,
+                shell=False,
+                timeout=15,
             )
             return res.stdout.strip()
         except subprocess.CalledProcessError as e:
-            return f"Git error executing command git {' '.join(args)}: {e.stderr.strip()}"
+            err = (e.stderr or "unknown error").strip()
+            return f"Git error executing command git {' '.join(args)}: {err}"
         except Exception as e:
             return f"Error executing command: {e}"
 
@@ -86,14 +108,22 @@ class GitMCPServer(IMCPServer):
         if capability == "git_status":
             result = self._run_git_command(["status"])
         elif capability == "git_log":
-            limit = args.get("limit", 5)
-            result = self._run_git_command(["log", f"-n", str(limit), "--oneline"])
+            try:
+                limit = max(1, min(int(args.get("limit", 5)), 100))
+            except (TypeError, ValueError):
+                limit = 5
+            result = self._run_git_command(["log", f"-n{limit}", "--oneline"])
         elif capability == "git_diff":
             file_path = args.get("file_path")
             cmd = ["diff"]
             if file_path:
-                cmd.append(file_path)
-            result = self._run_git_command(cmd)
+                try:
+                    cmd += ["--", self._safe_rel_path(file_path)]
+                except PermissionError as e:
+                    result = f"Security error: {e}"
+                    cmd = None
+            if cmd is not None:
+                result = self._run_git_command(cmd)
         elif capability == "git_blame":
             file_path = args.get("file_path")
             if not file_path:
@@ -104,7 +134,10 @@ class GitMCPServer(IMCPServer):
                     latency_ms=0.0,
                     errors=["Missing required file_path parameter."]
                 )
-            result = self._run_git_command(["blame", file_path])
+            try:
+                result = self._run_git_command(["blame", "--", self._safe_rel_path(file_path)])
+            except PermissionError as e:
+                result = f"Security error: {e}"
         else:
             return ToolResult(
                 tool_name=self.name,

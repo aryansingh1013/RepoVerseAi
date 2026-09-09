@@ -11,6 +11,8 @@ DEFAULT_SETTINGS = {
     "github_token": os.environ.get("GITHUB_TOKEN", ""),
     "filesystem_root": "",  # Resolved dynamically if empty or non-existent
     "terminal_safe_mode": True,
+    # P0 hardening: terminal execution is fully off until an operator opts in.
+    "terminal_enabled": False,
     "connection_timeout": 30,
     "refresh_interval": 60
 }

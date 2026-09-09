@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv*/
+.pytest_cache/
+
+# Secrets & local state
+.env
+backend/.env
+backend/core/active_workspace.json
+.repoverse/
+db/
+
+# Node
+frontend/node_modules/
+frontend/dist/.tmp/

@@ -139,7 +139,7 @@ class FilesystemMCPServer(MCPSubprocessServer):
         return super().execute(capability, args)
 
     def _resolve_path(self, path: str) -> str:
-        resolved = os.path.abspath(os.path.join(self.root_path, path))
-        if not resolved.startswith(self.root_path):
-            raise PermissionError("Access outside workspace is restricted.")
-        return resolved
+        # realpath + commonpath containment (startswith alone allows a sibling
+        # "/root-evil" to pass a "/root" prefix check, and skips symlink escapes).
+        from backend.core.security import resolve_within
+        return resolve_within(self.root_path, path)

@@ -99,6 +99,21 @@ Open your browser and navigate to `http://localhost:5173`.
 | `OPENAI_API_KEY` | Optional fallback provider |
 | `GEMINI_API_KEY` | Optional fallback provider |
 
+## 🔐 Security Model
+
+RepoVerse reads your filesystem and can run build/test commands, so the backend ships locked down:
+
+| Control | Behavior |
+|---|---|
+| **CORS** | `allow_origins` is an allowlist, not `*`. Set `CORS_ORIGINS=https://your-frontend.example` (comma-separated) for hosted frontends. Default: the local Vite dev server. |
+| **Trusted-client gate** | Mutating/admin endpoints (`/api/index`, `/api/clone`, `/api/workspace/select`, `/api/workspace/list_directories`, `/api/settings`, `/api/mcp/config`) are restricted. **Localhost always allowed** (desktop use). Remote callers must set `REPOVERSE_ADMIN_TOKEN` on the server and send it as the `X-RepoVerse-Admin` header. |
+| **Proxy awareness** | Behind Render/Railway/nginx, set `REPOVERSE_TRUST_PROXY=1` so the gate honors `X-Forwarded-For` — otherwise every remote user appears as `127.0.0.1` and inherits local trust. |
+| **Terminal tools** | `terminal_run` executes only an allowlist (`pytest`, `npm test/build/lint`, `npx tsc --noEmit`), parsed to argv with `shell=False` — operator chaining (`&&`, `;`, pipes) is rejected. The `python_execute` tool was **removed**. The `terminal_mcp` plugin is **disabled by default**; flip `"terminal_enabled": true` in `backend/mcp_settings.json` only on a local install. |
+| **Path containment** | `/api/file` and all filesystem tools resolve with `realpath` + `commonpath`, blocking `..` traversal, symlink escapes, and sibling-prefix confusion. |
+| **Git clone** | `https://`/`ssh://`/`git://` only (no `file://`, no `ext::`, no embedded credentials, no option-injection); target folder names are sanitized. `REPOVERSE_ALLOW_INSECURE_CLONES=1` re-enables plain `http://` for LAN git servers. |
+
+> ⚠️ These are P0 hardening measures for a single-operator tool. Multi-user deployments still need per-user auth (Supabase Auth / P1 migration) before the data layer itself becomes tenant-safe.
+
 ---
 
 ## 🛠️ Technology Stack

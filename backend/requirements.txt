@@ -19,3 +19,4 @@ openai
 google-generativeai
 requests
 pyyaml
+langchain-text-splitters

@@ -396,9 +396,9 @@ class AgentNodes:
             "2. filesystem_read (relative_path: str, start_line: int, end_line: int)\n"
             "3. git_log (limit: int)\n"
             "4. git_diff (file_path: str)\n"
-            "5. terminal_run (command: str) - ONLY supports 'pytest' or 'npm run build'\n"
-            "6. python_execute (code: str) - Executes python code snippet in temporary file\n"
-            "7. browser_search (query: str) - Search web docs\n\n"
+            "5. terminal_run (command: str) - ONLY an allowlist: pytest, python -m pytest, npm test, npm run build, npm run lint, npx tsc --noEmit. Shell operators are rejected.\n"
+            "6. browser_search (query: str) - Search web docs\n"
+            "(python_execute was removed for security; never propose it.)\n\n"
             "Respond ONLY with a JSON object: {\"tool\": \"name\", \"args\": { ... }}"
         )
         

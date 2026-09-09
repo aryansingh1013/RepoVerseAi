@@ -28,7 +28,7 @@ class TaskDecomposer:
             "}\n\n"
             "Rules:\n"
             "1. Output ONLY raw JSON.\n"
-            "2. Map capabilities_needed strictly to abstract capability names (e.g. read_file, git_log, browser_search, terminal_run, python_execute).\n"
+            "2. Map capabilities_needed strictly to abstract capability names (e.g. read_file, git_log, browser_search, terminal_run). Never propose python_execute; it no longer exists.\n"
             "3. Specify parent dependencies carefully to build a clean Directed Acyclic Graph (DAG)."
         )
 

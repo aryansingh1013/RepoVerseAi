@@ -1,9 +1,15 @@
 import os
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, Optional, List
+
+from backend.core.security import (
+    require_trusted_client,
+    resolve_within,
+    validate_clone_url,
+)
 
 from backend.core.config import settings
 from backend.core.theme import THEME_CONFIG
@@ -19,10 +25,23 @@ from backend.agent.registry import AgentToolRegistry
 
 app = FastAPI(title="RepoVerse AI Backend", version="1.0.0")
 
-# Enable CORS for the frontend (Vite defaults to port 5173)
+# CORS: allowlist instead of wildcard. Wildcard + allow_credentials is both an
+# insecure combo and rejected by browsers. Configure allowed origins via the
+# CORS_ORIGINS env var (comma-separated); defaults to the local Vite dev server.
+_default_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+]
+_cors_env = os.getenv("CORS_ORIGINS", "").strip()
+if _cors_env:
+    allow_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    allow_origins = _default_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -102,7 +121,7 @@ def scan_galaxy():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/index")
+@app.post("/api/index", dependencies=[Depends(require_trusted_client)])
 async def index_galaxy():
     """Indexes the active codebase (Galaxy) into ChromaDB and BM25."""
     # Allowed source-code extensions only (skip binaries, images, lock files)
@@ -220,15 +239,22 @@ def get_summary():
 @app.get("/api/file")
 def get_file_content(path: str = Query(..., description="Relative path of file to preview")):
     try:
-        full_path = os.path.join(settings.WORKSPACE_DIR, path)
-        # Security check: resolve and verify inside workspace
-        resolved_path = os.path.abspath(full_path)
-        if not resolved_path.startswith(os.path.abspath(settings.WORKSPACE_DIR)):
-            raise HTTPException(status_code=403, detail="Access outside workspace is forbidden.")
-            
+        # realpath + commonpath containment: defeats .. traversal, symlink
+        # escapes, and sibling-prefix confusion (workspace-evil vs workspace).
+        resolved_path = resolve_within(settings.WORKSPACE_DIR, path)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access outside workspace is forbidden.")
+
+    try:
         if not os.path.exists(resolved_path):
             raise HTTPException(status_code=404, detail="File not found.")
-            
+        if not os.path.isfile(resolved_path):
+            raise HTTPException(status_code=400, detail="Path is not a file.")
+
+        MAX_PREVIEW_BYTES = 2_000_000
+        if os.path.getsize(resolved_path) > MAX_PREVIEW_BYTES:
+            raise HTTPException(status_code=413, detail="File too large to preview.")
+
         with open(resolved_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
             
@@ -286,7 +312,12 @@ workspace_status = {
 class SelectWorkspaceRequest(BaseModel):
     path: str
 
-async def bg_clone_and_index(url: str):
+async def bg_clone_and_index(url: str, repo_name: str = ""):
+    """Clone a remote repo (URL already validated by ``validate_clone_url``)
+    and re-index the workspace. ``repo_name`` is pre-sanitized: never derived
+    from raw URL text at this layer, so traversal like ``..`` cannot escape
+    the cloned_repos directory. ``git`` argv uses the ``--`` separator so a
+    URL that looks like an option cannot be injected either."""
     global workspace_status
     workspace_status["status"] = "cloning"
     workspace_status["error_message"] = ""
@@ -295,16 +326,15 @@ async def bg_clone_and_index(url: str):
         import subprocess
         import shutil
         
-        repo_name = url.split("/")[-1]
-        if repo_name.endswith(".git"):
-            repo_name = repo_name[:-4]
+        if not repo_name:
+            _, repo_name = validate_clone_url(url)
         workspace_status["repo_name"] = repo_name
         
-        cloned_repos_dir = os.path.join(settings.DB_DIR, "cloned_repos")
+        cloned_repos_dir = os.path.abspath(os.path.join(settings.DB_DIR, "cloned_repos"))
         os.makedirs(cloned_repos_dir, exist_ok=True)
-        local_path = os.path.join(cloned_repos_dir, repo_name)
+        local_path = resolve_within(cloned_repos_dir, repo_name)
         
-        # Clone repository
+        # Clone repository — "--" separator so the URL can never be parsed as a git option
         if os.path.exists(local_path):
             try:
                 subprocess.run(
@@ -319,7 +349,7 @@ async def bg_clone_and_index(url: str):
             except Exception:
                 shutil.rmtree(local_path, ignore_errors=True)
                 subprocess.run(
-                    ["git", "clone", url, local_path],
+                    ["git", "clone", "--", url, local_path],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -328,7 +358,7 @@ async def bg_clone_and_index(url: str):
                 )
         else:
             subprocess.run(
-                ["git", "clone", url, local_path],
+                ["git", "clone", "--", url, local_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -374,44 +404,20 @@ def get_workspace_status():
     workspace_status["current_path"] = settings.WORKSPACE_DIR
     return workspace_status
 
-@app.get("/api/workspace/browse")
+@app.get("/api/workspace/browse", include_in_schema=False)
 def browse_directory():
-    """Opens a native OS folder dialog using Tkinter in a separate thread."""
-    import queue
-    import threading
-    import tkinter as tk
-    from tkinter import filedialog
-    
-    result_queue = queue.Queue()
-    
-    def run_dialog():
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            directory = filedialog.askdirectory(title="Select Local Workspace Directory")
-            root.destroy()
-            result_queue.put(directory)
-        except Exception as e:
-            result_queue.put(e)
-            
-    thread = threading.Thread(target=run_dialog)
-    thread.start()
-    thread.join()
-    
-    res = result_queue.get()
-    if isinstance(res, Exception):
-        import traceback
-        traceback.print_exception(type(res), res, res.__traceback__)
-        raise HTTPException(status_code=500, detail=f"Tkinter error: {type(res).__name__}: {str(res)}")
-        
-    if res:
-        return {"status": "success", "path": os.path.abspath(res)}
-    return {"status": "cancelled", "path": None}
+    """Removed during P0 hardening: a server-side native folder dialog is only
+    meaningful on a local desktop, and blocks a worker thread while open."""
+    raise HTTPException(
+        status_code=410,
+        detail="The native folder picker was removed for server safety. Type a path or use the browser-based directory lister.",
+    )
 
-@app.get("/api/workspace/list_directories")
+@app.get("/api/workspace/list_directories", dependencies=[Depends(require_trusted_client)])
 def list_directories(path: Optional[str] = None):
-    """Lists subdirectories of a given path for the web-based folder selector."""
+    """Lists subdirectories of a given path for the web-based folder selector.
+    Restricted to trusted clients (localhost or admin token) since it exposes
+    server filesystem structure."""
     try:
         if not path:
             # Default to current workspace directory or user home
@@ -450,27 +456,28 @@ def list_directories(path: Optional[str] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/workspace/select")
+@app.post("/api/workspace/select", dependencies=[Depends(require_trusted_client)])
 def select_workspace(payload: SelectWorkspaceRequest, background_tasks: BackgroundTasks):
     """Triggers background workspace switcher indexing for a local folder path."""
     target_path = os.path.abspath(payload.path.strip())
-    if not os.path.exists(target_path):
+    if not os.path.exists(target_path) or not os.path.isdir(target_path):
         raise HTTPException(status_code=400, detail="Directory path does not exist.")
         
     background_tasks.add_task(bg_select_and_index, target_path)
     return {"status": "success", "message": "Indexing started in background."}
 
-@app.post("/api/clone")
+@app.post("/api/clone", dependencies=[Depends(require_trusted_client)])
 def clone_repository(payload: CloneRequest, background_tasks: BackgroundTasks):
     """Triggers background clone and index operation."""
-    url = payload.repo_url.strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="Repository URL is required.")
-        
-    background_tasks.add_task(bg_clone_and_index, url)
+    try:
+        clean_url, repo_name = validate_clone_url(payload.repo_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    background_tasks.add_task(bg_clone_and_index, clean_url, repo_name)
     return {"status": "success", "message": "Cloning started in background."}
 
-@app.post("/api/settings")
+@app.post("/api/settings", dependencies=[Depends(require_trusted_client)])
 def update_settings(payload: SettingsUpdate):
     """Dynamically updates model router configurations without credentials input."""
     import yaml
@@ -576,13 +583,23 @@ def get_llm_telemetry():
 class MCPSettingsPayload(BaseModel):
     filesystem_root: Optional[str] = None
     terminal_safe_mode: Optional[bool] = None
+    terminal_enabled: Optional[bool] = None
     connection_timeout: Optional[int] = None
     refresh_interval: Optional[int] = None
 
-@app.post("/api/mcp/config")
+@app.post("/api/mcp/config", dependencies=[Depends(require_trusted_client)])
 def save_mcp_config(payload: MCPSettingsPayload):
     from backend.mcp.config import mcp_settings
     update_dict = {k: v for k, v in payload.model_dump().items() if v is not None}
+    # Safe-mode can never be disabled remotely: even if a client sends
+    # terminal_safe_mode=false we keep the destructive-pattern guard on.
+    if update_dict.get("terminal_safe_mode") is False:
+        update_dict["terminal_safe_mode"] = True
+    # Clamp timeouts to sane ranges.
+    if "connection_timeout" in update_dict:
+        update_dict["connection_timeout"] = max(1, min(int(update_dict["connection_timeout"]), 120))
+    if "refresh_interval" in update_dict:
+        update_dict["refresh_interval"] = max(5, min(int(update_dict["refresh_interval"]), 3600))
     mcp_settings.save(update_dict)
     mcp_manager.reload_connections()
     return {"status": "success", "settings": get_mcp_config()}

