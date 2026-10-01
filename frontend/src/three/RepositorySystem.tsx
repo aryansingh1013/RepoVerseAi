@@ -1,13 +1,13 @@
 import { useMemo } from "react";
 import { useNavigation } from "@/hooks/useNavigation";
 import { RepositoryStar } from "./RepositoryStar";
-import { FilePlanet } from "./FilePlanet";
-import { getLanguageVisualIdentity } from "./PlanetTextures";
+import { FolderPlanet } from "./FolderPlanet";
+import { getFolderVisualIdentity, getFileVisualIdentity } from "./PlanetTextures";
 import type {
   RepositorySystemData,
   RepositoryNode,
-  FilePlanet as FilePlanetType,
-  SymbolMoon as SymbolMoonType,
+  FolderPlanet as FolderPlanetType,
+  FileMoon as FileMoonType,
 } from "./sceneTypes";
 
 export function RepositorySystem() {
@@ -25,107 +25,123 @@ export function RepositorySystem() {
       rootNode?.name ||
       "Repository";
 
+    // 2. Extract Folder Planets and File Moons
+    const folderNodes = spaceGraph.filter((o) => o.kind === "folder" || o.kind === "planet");
+    const fileNodes = spaceGraph.filter((o) => o.kind === "file" || o.kind === "moon");
+
     // Star is large, majestic solar center
     const repository: RepositoryNode = {
       id: rootNode?.id || "repository-star",
       name: repoName,
       description: repositories[0]?.description || "Repository central star",
-      fileCount: 0,
+      folderCount: folderNodes.length,
+      fileCount: fileNodes.length,
       languages: [],
       color: "#f59e0b", // Radiant warm solar amber
       radius: 2.8,
     };
 
-    // 2. Extract all file planets from spaceGraph
-    const planetNodes = spaceGraph.filter((o) => o.kind === "planet");
-    const moonNodes = spaceGraph.filter((o) => o.kind === "moon");
-
-    repository.fileCount = planetNodes.length;
-
-    // Spacious planetary bands around the central star
-    const planetsPerTrack = planetNodes.length > 24 ? 3 : planetNodes.length > 12 ? 2 : 1;
-    const baseOrbitRadius = 8.2;
-    const trackSpacing = 4.2;
+    // Calculate folder planets layout
+    const totalFolders = Math.max(1, folderNodes.length);
+    const planetsPerTrack = totalFolders > 8 ? 3 : totalFolders > 4 ? 2 : 1;
+    const baseOrbitRadius = 8.5;
+    const trackSpacing = 4.8;
 
     const languagesSet = new Set<string>();
 
-    const planets: FilePlanetType[] = planetNodes.map((p, index) => {
-      const filePath = p.filePath || (p as any).path || p.id.replace("planet-", "");
-      const lang = p.language || filePath.split(".").pop() || "text";
-      languagesSet.add(lang);
+    // 3. Map folders to FolderPlanets
+    const folders: FolderPlanetType[] = folderNodes.map((folderNode, index) => {
+      const folderName = folderNode.name;
+      const folderPath = (folderNode as any).path || (folderNode as any).filePath || folderName;
 
-      const visual = getLanguageVisualIdentity(filePath, lang);
+      // Deterministic folder visual identity
+      const visual = getFolderVisualIdentity(folderName);
 
-      // Directory metadata (folder is metadata only, NOT a celestial body)
-      const dirParts = filePath.split("/");
-      const directory = dirParts.length > 1 ? dirParts.slice(0, -1).join("/") : "";
-
-      // Orbital placement: concentric separated bands
+      // Orbital placement in separated concentric bands
       const trackIndex = Math.floor(index / planetsPerTrack);
       const slotIndex = index % planetsPerTrack;
       const orbitRadius = baseOrbitRadius + trackIndex * trackSpacing;
 
-      // Golden ratio angle offset + slot distribution so planets never cluster
-      const angleOffset = (slotIndex * (2 * Math.PI)) / planetsPerTrack + trackIndex * 0.85;
+      // Golden ratio angle offset so folder planets never visually align or collide
+      const angleOffset =
+        (slotIndex * (2 * Math.PI)) / planetsPerTrack + trackIndex * 0.95;
 
-      // Keplerian orbit speed (further bodies orbit slightly slower)
-      const orbitSpeed = 0.038 / Math.sqrt(orbitRadius / baseOrbitRadius);
+      // Calm Keplerian orbit speed
+      const orbitSpeed = 0.032 / Math.sqrt(orbitRadius / baseOrbitRadius);
 
-      // Extract moons that belong to this planet
-      const relatedMoons = moonNodes.filter(
-        (m) => m.parentId === p.id || m.parentId === filePath
+      // Extract file moons that belong to this folder
+      const childFiles = fileNodes.filter(
+        (f) =>
+          f.parentId === folderNode.id ||
+          f.parentId === folderPath ||
+          (f as any).folder === folderName
       );
 
-      // Sizing formula: Planets are substantial worlds (1.05 to 1.75 radius)
-      const fileBytes = (p as any).size_bytes || (p as any).size || 1500;
-      const normalizedSize = Math.min(fileBytes / 30000, 1.0);
-      const normalizedSymbols = Math.min(relatedMoons.length / 8, 1.0);
+      // Sizing formula: normalize folder size
+      const totalBytes =
+        (folderNode as any).size_bytes ||
+        (folderNode as any).size ||
+        childFiles.reduce((acc, f) => acc + ((f as any).size || 1500), 0);
+      const normalizedFiles = Math.min(childFiles.length / 25, 1.0);
+      const normalizedSize = Math.min(totalBytes / 150000, 1.0);
       const radius = Math.min(
-        Math.max(1.05 + normalizedSize * 0.45 + normalizedSymbols * 0.25, 1.05),
-        1.75
+        Math.max(1.15 + normalizedFiles * 0.45 + normalizedSize * 0.25, 1.15),
+        1.85
       );
 
-      // Moons are clearly smaller (0.16 to 0.24 radius) — a 5x to 7x ratio vs parent planet!
-      const moons: SymbolMoonType[] = relatedMoons.map((m, mIdx) => {
-        const symbolLines =
-          (m as any).symbolEndLine && (m as any).symbolLine
-            ? (m as any).symbolEndLine - (m as any).symbolLine + 1
-            : 15;
+      // Child file moons orbiting around this folder planet
+      const files: FileMoonType[] = childFiles.map((fileNode, fIdx) => {
+        const filePath = (fileNode as any).filePath || (fileNode as any).path || fileNode.name;
+        const fileName = fileNode.name || filePath.split("/").pop() || "file";
+        const ext = fileName.includes(".") ? fileName.split(".").pop() || "" : "";
+        const lang = (fileNode as any).language || ext || "text";
+        languagesSet.add(lang);
+
+        const fileVisual = getFileVisualIdentity(filePath, lang);
+
+        // Moons size & orbit around parent planet
+        const fileLines = (fileNode as any).lines || 20;
         const moonRadius = Math.min(
-          Math.max(0.16 + Math.min(symbolLines / 150, 1.0) * 0.08, 0.16),
-          0.24
+          Math.max(0.18 + Math.min(fileLines / 200, 1.0) * 0.08, 0.18),
+          0.26
         );
 
-        // Orbit radius around parent planet (clear separated orbits)
-        const mOrbitRadius = radius * 1.85 + mIdx * 0.8;
-        const mOrbitSpeed = 0.14 / (1 + mIdx * 0.15);
-        const mPhase = (mIdx * (2 * Math.PI)) / Math.max(1, relatedMoons.length) + (mIdx * 0.5);
+        // Orbit radius around parent folder planet
+        const mOrbitRadius = radius * 1.75 + fIdx * 0.75;
+        const mOrbitSpeed = 0.12 / (1 + fIdx * 0.12);
+        const mPhase =
+          (fIdx * (2 * Math.PI)) / Math.max(1, childFiles.length) + fIdx * 0.45;
 
         return {
-          id: m.id,
-          planetId: p.id,
-          name: m.name,
-          type: (m.symbolType as any) || "function",
-          lineStart: m.symbolLine || 1,
-          lineEnd: (m as any).symbolEndLine || m.symbolLine || 1,
-          summary: m.symbolSummary || "",
+          id: fileNode.id,
+          parentId: folderNode.id,
+          name: fileName,
+          path: filePath,
+          extension: ext,
+          language: lang,
+          size: (fileNode as any).size || 1500,
+          lines: (fileNode as any).lines,
+          functions: (fileNode as any).functions || 0,
+          classes: (fileNode as any).classes || 0,
+          color: fileVisual.color,
           radius: moonRadius,
           orbitRadius: mOrbitRadius,
           orbitSpeed: mOrbitSpeed,
           orbitPhase: mPhase,
-          inclination: ((mIdx % 3) - 1) * 0.22,
-          direction: mIdx % 2 === 0 ? 1 : -1,
-          color: m.symbolType === "class" ? "#c084fc" : (m.symbolType as string) === "method" ? "#38bdf8" : "#fbbf24",
+          inclination: ((fIdx % 3) - 1) * 0.18,
+          direction: fIdx % 2 === 0 ? 1 : -1,
         };
       });
 
       return {
-        id: p.id,
-        path: filePath,
-        name: p.name,
-        directory,
-        language: lang,
-        size: fileBytes,
+        id: folderNode.id,
+        name: folderName,
+        path: folderPath,
+        fileCount: childFiles.length,
+        folderCount: (folderNode as any).folderCount || 0,
+        size: totalBytes,
+        languageBreakdown: (folderNode as any).languageBreakdown || {},
+        primaryLanguage: (folderNode as any).primaryLanguage || (childFiles[0]?.language || "text"),
         color: visual.color,
         atmosphereColor: visual.atmosphereColor,
         textureType: visual.textureType,
@@ -133,26 +149,73 @@ export function RepositorySystem() {
         orbitRadius,
         orbitSpeed,
         orbitPhase: angleOffset,
-        inclination: ((index % 7) - 3) * 0.035, // subtle natural orbital tilt
+        inclination: ((index % 5) - 2) * 0.03,
         direction: index % 2 === 0 ? 1 : -1,
-        hasRings: Boolean(p.hasRings || index % 4 === 0),
-        moons,
+        hasRings: Boolean(folderNode.hasRings || index % 3 === 0),
+        files,
+      };
+    });
+
+    // 4. Root-level files (files that do NOT belong to any folder planet, e.g. README.md)
+    const rootFileNodes = fileNodes.filter(
+      (f) =>
+        f.parentId === "repository-star" ||
+        f.parentId === rootNode?.id ||
+        !f.parentId ||
+        f.parentId === ""
+    );
+
+    const rootFiles: FileMoonType[] = rootFileNodes.map((rf, rIdx) => {
+      const filePath = (rf as any).filePath || (rf as any).path || rf.name;
+      const fileName = rf.name || filePath.split("/").pop() || "file";
+      const ext = fileName.includes(".") ? fileName.split(".").pop() || "" : "";
+      const lang = (rf as any).language || ext || "text";
+      languagesSet.add(lang);
+
+      const fileVisual = getFileVisualIdentity(filePath, lang);
+
+      // Root files orbit close to the central star (orbit radius 4.2 to 5.8)
+      const starOrbitRadius = repository.radius * 1.55 + rIdx * 0.75;
+      const starOrbitSpeed = 0.07 / (1 + rIdx * 0.08);
+      const starPhase = (rIdx * (2 * Math.PI)) / Math.max(1, rootFileNodes.length);
+
+      return {
+        id: rf.id,
+        parentId: repository.id,
+        name: fileName,
+        path: filePath,
+        extension: ext,
+        language: lang,
+        size: (rf as any).size || 2000,
+        lines: (rf as any).lines,
+        functions: (rf as any).functions || 0,
+        classes: (rf as any).classes || 0,
+        color: fileVisual.color,
+        radius: 0.22,
+        orbitRadius: starOrbitRadius,
+        orbitSpeed: starOrbitSpeed,
+        orbitPhase: starPhase,
+        inclination: ((rIdx % 4) - 1.5) * 0.12,
+        direction: rIdx % 2 === 0 ? 1 : -1,
       };
     });
 
     repository.languages = Array.from(languagesSet);
 
-    return { repository, planets };
+    return { repository, folders, rootFiles };
   }, [spaceGraph, workspaceStatus.repo_name, repositories]);
 
   return (
     <group>
-      {/* 1. Exactly ONE central star representing the repository */}
-      <RepositoryStar repository={systemData.repository} />
+      {/* 1. Exactly ONE central star representing the repository (with root file moons) */}
+      <RepositoryStar
+        repository={systemData.repository}
+        rootFiles={systemData.rootFiles}
+      />
 
-      {/* 2. File Planets orbiting the central star */}
-      {systemData.planets.map((planet) => (
-        <FilePlanet key={planet.id} planet={planet} />
+      {/* 2. Folder Planets orbiting the central star (each holding its File Moons) */}
+      {systemData.folders.map((folder) => (
+        <FolderPlanet key={folder.id} planet={folder} />
       ))}
     </group>
   );

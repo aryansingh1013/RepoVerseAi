@@ -71,8 +71,8 @@ export function SpaceScene() {
   // Dynamic zoom distance depending on focused celestial body
   const viewDistance = useMemo(() => {
     if (!focusObject) return 24;
-    if (focusObject.kind === "moon") return 1.4;
-    if (focusObject.kind === "planet") return 4.5;
+    if (focusObject.kind === "moon" || focusObject.kind === "file") return 1.6;
+    if (focusObject.kind === "planet" || focusObject.kind === "folder") return 5.2;
     // Central Repository Star
     return 24;
   }, [focusObject]);

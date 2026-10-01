@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo } from "react";
+import { useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { Html } from "@react-three/drei";
@@ -7,18 +7,18 @@ import { positionsRegistry } from "./positionsRegistry";
 import { getPlanetMaterial } from "./PlanetMaterial";
 import { getRingTexture } from "./PlanetTextures";
 import { OrbitRing } from "./OrbitRing";
-import { SymbolMoon } from "./SymbolMoon";
-import type { FilePlanet as FilePlanetType } from "./sceneTypes";
+import { FileMoon } from "./FileMoon";
+import type { FolderPlanet as FolderPlanetType } from "./sceneTypes";
 
-interface FilePlanetProps {
-  planet: FilePlanetType;
+interface FolderPlanetProps {
+  planet: FolderPlanetType;
 }
 
-// ─── Saturn-Style Ring System ────────────────────────────────────────────────
+// ─── Saturn-Style Ring System for Folders ────────────────────────────────────
 
-function PlanetRingSystem({ radius, color }: { radius: number; color: string }) {
+function FolderRingSystem({ radius, color }: { radius: number; color: string }) {
   const ringMesh = useRef<THREE.Mesh>(null);
-  const ringTexture = useMemo(() => getRingTexture(color, 256), [color]);
+  const ringTexture = getRingTexture(color, 256);
 
   useFrame((_, delta) => {
     if (ringMesh.current) {
@@ -61,7 +61,7 @@ function AtmosphereRim({
         <meshBasicMaterial
           color={atmosphereColor || color}
           transparent
-          opacity={0.16}
+          opacity={0.18}
           side={THREE.BackSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
@@ -83,9 +83,9 @@ function AtmosphereRim({
   );
 }
 
-// ─── Main FilePlanet Component ───────────────────────────────────────────────
+// ─── Main FolderPlanet Component ─────────────────────────────────────────────
 
-export function FilePlanet({ planet }: FilePlanetProps) {
+export function FolderPlanet({ planet }: FolderPlanetProps) {
   const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -101,7 +101,7 @@ export function FilePlanet({ planet }: FilePlanetProps) {
   const isSelected = selectedId === planet.id;
   const material = getPlanetMaterial(planet.textureType, planet.color);
 
-  // Time-based orbital motion around central star (calm & cinematic)
+  // Time-based orbital motion around central repository star (calm & cinematic)
   useFrame(({ clock }, delta) => {
     const t = clock.getElapsedTime() * planet.orbitSpeed * planet.direction + planet.orbitPhase;
     const x = Math.cos(t) * planet.orbitRadius;
@@ -128,7 +128,7 @@ export function FilePlanet({ planet }: FilePlanetProps) {
 
   return (
     <>
-      {/* Planetary orbital path ring around central star */}
+      {/* Planetary orbital path ring around central repository star */}
       <OrbitRing
         radius={planet.orbitRadius}
         inclination={planet.inclination}
@@ -136,7 +136,7 @@ export function FilePlanet({ planet }: FilePlanetProps) {
         opacity={0.16}
       />
 
-      {/* Planet entity group (holds the planet body and its orbiting moons) */}
+      {/* Planet entity group (holds the folder planet body and its orbiting file moons) */}
       <group ref={groupRef}>
         <mesh
           ref={meshRef}
@@ -156,7 +156,7 @@ export function FilePlanet({ planet }: FilePlanetProps) {
             hover(null);
           }}
         >
-          {/* Substantial, solid 3D spherical planet body */}
+          {/* Substantial, solid 3D spherical folder planet body */}
           <sphereGeometry args={[planet.radius, 44, 44]} />
         </mesh>
 
@@ -184,22 +184,22 @@ export function FilePlanet({ planet }: FilePlanetProps) {
 
         {/* Optional planetary rings */}
         {planet.hasRings && (
-          <PlanetRingSystem radius={planet.radius} color={planet.color} />
+          <FolderRingSystem radius={planet.radius} color={planet.color} />
         )}
 
         {/* Floating Label on Hover */}
         {isHovered && (
-          <Html distanceFactor={12} position={[0, planet.radius + 0.8, 0]} occlude>
+          <Html distanceFactor={14} position={[0, planet.radius + 0.9, 0]} occlude>
             <div className="pointer-events-none whitespace-nowrap rounded-lg bg-void-950/95 px-3 py-2 text-xs font-mono text-mist-100 border border-white/10 shadow-glow backdrop-blur-md">
               <div className="flex items-center gap-1.5 font-bold">
                 <span className="text-signal-400">🪐</span>
-                <span className="text-mist-100">{planet.name}</span>
+                <span className="text-mist-100">{planet.name}/</span>
               </div>
               <div className="flex items-center gap-2 mt-0.5 text-[10px] text-mist-400">
-                <span>{planet.directory ? `${planet.directory}/` : "root"}</span>
-                {planet.moons.length > 0 && (
-                  <span className="text-amber-400 font-medium">
-                    • {planet.moons.length} moon{planet.moons.length > 1 ? "s" : ""}
+                <span>{planet.fileCount} file{planet.fileCount !== 1 ? "s" : ""}</span>
+                {planet.primaryLanguage && (
+                  <span className="text-signal-400 font-medium">
+                    • {planet.primaryLanguage}
                   </span>
                 )}
               </div>
@@ -207,9 +207,9 @@ export function FilePlanet({ planet }: FilePlanetProps) {
           </Html>
         )}
 
-        {/* Moons orbiting this parent file planet */}
-        {planet.moons.map((moon) => (
-          <SymbolMoon key={moon.id} moon={moon} />
+        {/* File Moons orbiting this parent folder planet */}
+        {planet.files.map((file) => (
+          <FileMoon key={file.id} moon={file} />
         ))}
       </group>
     </>

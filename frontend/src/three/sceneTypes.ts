@@ -1,57 +1,57 @@
 /**
- * Canonical types for the RepoVerse Solar System visualization.
+ * Canonical types for RepoVerse Solar System:
  * 
- * Hierarchy:
- * Repository (Central Star)
- *   ↓
- * FilePlanets (Source files orbiting the central star)
- *   ↓
- * SymbolMoons (Functions / Classes / Methods orbiting parent file planet)
+ * ⭐ Repository (Central Star)
+ *       │
+ *       ├── 🪐 Folder Planet
+ *       │      ├── 🌙 File Moon
+ *       │      └── 🌙 File Moon
+ *       │
+ *       └── 🌙 Root File Moon (e.g. README.md, package.json orbiting the Star)
  */
 
-export type CelestialType = "repository" | "planet" | "moon";
+export type CelestialType = "repository" | "folder" | "file";
 
 export type PlanetTextureType =
-  | "python"
-  | "javascript"
-  | "typescript"
-  | "react"
-  | "css"
-  | "html"
-  | "json"
-  | "markdown"
-  | "sql"
-  | "cpp"
-  | "java"
+  | "rocky"
+  | "cloudy"
+  | "atmospheric"
+  | "ocean"
+  | "desert"
+  | "icy"
+  | "volcanic"
+  | "crystalline"
   | "generic";
 
-export interface SymbolMoon {
+export interface FileMoon {
   id: string;
-  planetId: string;
+  parentId: string; // folder ID, or "repository-star" for root files
   name: string;
-  type: "function" | "class" | "method";
-  lineStart: number;
-  lineEnd: number;
-  summary?: string;
-  details?: string;
-  parameters?: string[];
+  path: string;
+  extension: string;
+  language: string;
+  size: number;
+  lines?: number;
+  functions?: number;
+  classes?: number;
+  color: string;
   radius: number;
   orbitRadius: number;
   orbitSpeed: number;
   orbitPhase: number;
   inclination: number;
   direction: 1 | -1;
-  color: string;
 }
 
-export interface FilePlanet {
+export interface FolderPlanet {
   id: string;
-  path: string;
   name: string;
-  directory: string;
-  language: string;
+  path: string;
+  fileCount: number;
+  folderCount: number;
   size: number;
-  lines?: number;
+  languageBreakdown: Record<string, number>;
+  primaryLanguage: string;
   color: string;
   atmosphereColor?: string;
   textureType: PlanetTextureType;
@@ -62,10 +62,7 @@ export interface FilePlanet {
   inclination: number;
   direction: 1 | -1;
   hasRings?: boolean;
-  moons: SymbolMoon[];
-  imports?: string[];
-  functionsCount?: number;
-  classesCount?: number;
+  files: FileMoon[];
 }
 
 export interface RepositoryNode {
@@ -73,6 +70,7 @@ export interface RepositoryNode {
   name: string;
   owner?: string;
   description?: string;
+  folderCount: number;
   fileCount: number;
   languages: string[];
   techStack?: string[];
@@ -82,5 +80,6 @@ export interface RepositoryNode {
 
 export interface RepositorySystemData {
   repository: RepositoryNode;
-  planets: FilePlanet[];
+  folders: FolderPlanet[];
+  rootFiles: FileMoon[];
 }

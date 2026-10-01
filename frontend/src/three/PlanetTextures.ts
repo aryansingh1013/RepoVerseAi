@@ -17,134 +17,10 @@ export function getCachedTexture(key: string, generator: () => HTMLCanvasElement
   return texture;
 }
 
-// ─── Deterministic Visual Identity Mapping ───────────────────────────────────
-
-export interface LanguageVisualIdentity {
-  color: string;
-  atmosphereColor: string;
-  textureType: PlanetTextureType;
-}
-
-export function getLanguageVisualIdentity(path: string, language?: string): LanguageVisualIdentity {
-  const ext = (language || path.split(".").pop() || "").toLowerCase().replace(/^\./, "");
-
-  switch (ext) {
-    case "py":
-    case "pyw":
-    case "python":
-      return {
-        color: "#2563eb", // Python blue
-        atmosphereColor: "#60a5fa",
-        textureType: "python",
-      };
-
-    case "js":
-    case "mjs":
-    case "cjs":
-    case "javascript":
-      return {
-        color: "#f59e0b", // Warm amber / orange
-        atmosphereColor: "#fbbf24",
-        textureType: "javascript",
-      };
-
-    case "ts":
-    case "typescript":
-      return {
-        color: "#3178c6", // TypeScript blue/cyan
-        atmosphereColor: "#38bdf8",
-        textureType: "typescript",
-      };
-
-    case "tsx":
-    case "jsx":
-    case "react":
-      return {
-        color: "#06b6d4", // Electric cyan
-        atmosphereColor: "#22d3ee",
-        textureType: "react",
-      };
-
-    case "c":
-    case "cpp":
-    case "cc":
-    case "cxx":
-    case "h":
-    case "hpp":
-      return {
-        color: "#ea580c", // Red/orange
-        atmosphereColor: "#fb923c",
-        textureType: "cpp",
-      };
-
-    case "java":
-    case "jar":
-    case "kt":
-    case "kotlin":
-      return {
-        color: "#dc2626", // Crimson red
-        atmosphereColor: "#f87171",
-        textureType: "java",
-      };
-
-    case "css":
-    case "scss":
-    case "sass":
-    case "less":
-      return {
-        color: "#9333ea", // Purple
-        atmosphereColor: "#c084fc",
-        textureType: "css",
-      };
-
-    case "html":
-    case "htm":
-      return {
-        color: "#e11d48", // HTML orange / warm coral
-        atmosphereColor: "#fb7185",
-        textureType: "html",
-      };
-
-    case "json":
-    case "yaml":
-    case "yml":
-    case "toml":
-      return {
-        color: "#d97706", // Amber
-        atmosphereColor: "#fde047",
-        textureType: "json",
-      };
-
-    case "md":
-    case "markdown":
-    case "txt":
-      return {
-        color: "#64748b", // Neutral slate gray
-        atmosphereColor: "#94a3b8",
-        textureType: "markdown",
-      };
-
-    case "sql":
-    case "prisma":
-      return {
-        color: "#059669", // Emerald green
-        atmosphereColor: "#34d399",
-        textureType: "sql",
-      };
-
-    default:
-      return {
-        color: "#64748b", // Neutral gray
-        atmosphereColor: "#94a3b8",
-        textureType: "generic",
-      };
-  }
-}
-
 // ─── Simple Deterministic Pseudo-Random ──────────────────────────────────────
 
 function createPRNG(seed: number) {
-  let s = seed % 2147483647;
+  let s = Math.abs(seed) % 2147483647;
   if (s <= 0) s += 2147483646;
   return () => {
     s = (s * 16807) % 2147483647;
@@ -152,7 +28,135 @@ function createPRNG(seed: number) {
   };
 }
 
-// ─── Procedural Planet Surface Generator ─────────────────────────────────────
+function stringToSeed(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) || 42;
+}
+
+// ─── Deterministic Folder Planet Visual Identity (Section 9 & 10) ────────────
+
+export interface FolderVisualIdentity {
+  color: string;
+  atmosphereColor: string;
+  textureType: PlanetTextureType;
+}
+
+const CURATED_PALETTE: FolderVisualIdentity[] = [
+  { color: "#2563eb", atmosphereColor: "#60a5fa", textureType: "cloudy" },      // Blue
+  { color: "#06b6d4", atmosphereColor: "#22d3ee", textureType: "atmospheric" }, // Cyan
+  { color: "#9333ea", atmosphereColor: "#c084fc", textureType: "icy" },         // Purple
+  { color: "#ea580c", atmosphereColor: "#f97316", textureType: "desert" },      // Orange
+  { color: "#10b981", atmosphereColor: "#34d399", textureType: "rocky" },       // Emerald
+  { color: "#e11d48", atmosphereColor: "#fb7185", textureType: "volcanic" },    // Crimson
+  { color: "#059669", atmosphereColor: "#10b981", textureType: "ocean" },       // Deep teal
+  { color: "#7c3aed", atmosphereColor: "#a78bfa", textureType: "crystalline" }, // Violet
+  { color: "#d97706", atmosphereColor: "#fbbf24", textureType: "desert" },      // Amber
+];
+
+export function getFolderVisualIdentity(folderName: string): FolderVisualIdentity {
+  const norm = folderName.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Curated prominent assignments for standard repository folders
+  if (norm.includes("back") || norm.includes("server") || norm === "api") {
+    return { color: "#2563eb", atmosphereColor: "#60a5fa", textureType: "cloudy" };
+  }
+  if (norm.includes("front") || norm.includes("client") || norm === "ui" || norm === "web") {
+    return { color: "#06b6d4", atmosphereColor: "#22d3ee", textureType: "atmospheric" };
+  }
+  if (norm.includes("doc")) {
+    return { color: "#9333ea", atmosphereColor: "#c084fc", textureType: "icy" };
+  }
+  if (norm.includes("script") || norm === "bin" || norm === "tools") {
+    return { color: "#ea580c", atmosphereColor: "#f97316", textureType: "desert" };
+  }
+  if (norm.includes("test") || norm.includes("spec")) {
+    return { color: "#10b981", atmosphereColor: "#34d399", textureType: "rocky" };
+  }
+  if (norm.includes("supa") || norm.includes("db") || norm.includes("data") || norm.includes("sql")) {
+    return { color: "#059669", atmosphereColor: "#10b981", textureType: "volcanic" };
+  }
+  if (norm.includes("agent") || norm.includes("ai") || norm === "core" || norm === "models") {
+    return { color: "#7c3aed", atmosphereColor: "#a78bfa", textureType: "crystalline" };
+  }
+
+  // Stable hash into curated celestial palette
+  const seed = stringToSeed(folderName);
+  return CURATED_PALETTE[seed % CURATED_PALETTE.length];
+}
+
+// ─── Deterministic File Moon Visual Identity (Section 13) ─────────────────────
+
+export interface FileVisualIdentity {
+  color: string;
+  atmosphereColor: string;
+}
+
+export function getFileVisualIdentity(filePath: string, language?: string): FileVisualIdentity {
+  const ext = (language || filePath.split(".").pop() || "").toLowerCase().replace(/^\./, "");
+
+  switch (ext) {
+    case "py":
+    case "pyw":
+    case "python":
+      return { color: "#3b82f6", atmosphereColor: "#60a5fa" }; // Python blue
+
+    case "ts":
+    case "typescript":
+      return { color: "#2563eb", atmosphereColor: "#60a5fa" }; // TypeScript cobalt
+
+    case "tsx":
+    case "jsx":
+    case "react":
+      return { color: "#06b6d4", atmosphereColor: "#22d3ee" }; // React cyan
+
+    case "js":
+    case "mjs":
+    case "cjs":
+    case "javascript":
+      return { color: "#f59e0b", atmosphereColor: "#fbbf24" }; // JavaScript yellow/amber
+
+    case "md":
+    case "markdown":
+    case "txt":
+      return { color: "#94a3b8", atmosphereColor: "#cbd5e1" }; // Markdown slate gray
+
+    case "json":
+    case "yaml":
+    case "yml":
+    case "toml":
+      return { color: "#d97706", atmosphereColor: "#fbbf24" }; // Amber
+
+    case "css":
+    case "scss":
+    case "sass":
+    case "less":
+      return { color: "#a855f7", atmosphereColor: "#c084fc" }; // Purple
+
+    case "c":
+    case "cpp":
+    case "cc":
+    case "h":
+    case "hpp":
+      return { color: "#ea580c", atmosphereColor: "#fb923c" }; // Red/orange
+
+    case "html":
+    case "htm":
+      return { color: "#e11d48", atmosphereColor: "#fb7185" }; // Coral/orange
+
+    case "sql":
+    case "prisma":
+      return { color: "#10b981", atmosphereColor: "#34d399" }; // Emerald
+
+    default:
+      return { color: "#64748b", atmosphereColor: "#94a3b8" }; // Neutral slate
+  }
+}
+
+// ─── Procedural Planet Surface Generator (Section 10) ─────────────────────────
 
 export function getPlanetTexture(
   textureType: PlanetTextureType,
@@ -165,87 +169,68 @@ export function getPlanetTexture(
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext("2d")!;
-    const rand = createPRNG(baseColorHex.length * 37 + size);
-
+    const rand = createPRNG(stringToSeed(baseColorHex) + size * 13);
     const baseRGB = hexToRgb(baseColorHex);
 
-    // 1. Fill base tone
+    // Base surface fill
     ctx.fillStyle = baseColorHex;
     ctx.fillRect(0, 0, size, size);
 
-    if (textureType === "javascript" || textureType === "typescript") {
-      // Atmospheric Jupiter-style horizontal banding
-      const bandCount = 14;
+    if (textureType === "atmospheric" || textureType === "ocean") {
+      // Atmospheric Jupiter-like subtle banding & circulation swirls
+      const bandCount = 12;
       for (let i = 0; i < bandCount; i++) {
         const y = (i / bandCount) * size;
-        const h = size / bandCount + (rand() - 0.5) * 4;
-        const lightnessMod = (rand() - 0.5) * 0.35;
-        const color = shadeRgb(baseRGB, lightnessMod);
-        ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.6)`;
+        const h = size / bandCount + (rand() - 0.5) * 6;
+        const shade = (rand() - 0.5) * 0.35;
+        const col = shadeRgb(baseRGB, shade);
+        ctx.fillStyle = `rgba(${col.r}, ${col.g}, ${col.b}, 0.55)`;
         ctx.fillRect(0, y, size, h);
       }
-    } else if (textureType === "python") {
-      // Cloudy oceanic / atmospheric noise
+    } else if (textureType === "cloudy") {
+      // Cloudy oceanic / cumulus planetary noise
       for (let i = 0; i < 40; i++) {
         const x = rand() * size;
         const y = rand() * size;
         const rad = 15 + rand() * 45;
-        const shade = rand() > 0.5 ? 0.25 : -0.25;
-        const color = shadeRgb(baseRGB, shade);
+        const shade = rand() > 0.5 ? 0.3 : -0.25;
+        const col = shadeRgb(baseRGB, shade);
         const grad = ctx.createRadialGradient(x, y, 2, x, y, rad);
-        grad.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, 0.5)`);
+        grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0.5)`);
         grad.addColorStop(1, "rgba(0, 0, 0, 0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(x, y, rad, 0, Math.PI * 2);
         ctx.fill();
       }
-    } else if (textureType === "react") {
-      // Cybernetic aura with subtle horizontal flow
-      for (let i = 0; i < 20; i++) {
-        const y = rand() * size;
-        const grad = ctx.createLinearGradient(0, y, size, y);
-        grad.addColorStop(0, "rgba(34, 211, 238, 0.1)");
-        grad.addColorStop(0.5, "rgba(255, 255, 255, 0.4)");
-        grad.addColorStop(1, "rgba(6, 182, 212, 0.1)");
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, y, size, 3 + rand() * 6);
-      }
-    } else if (textureType === "css") {
-      // Crystalline fractal / noise surface
-      for (let i = 0; i < 35; i++) {
+    } else if (textureType === "crystalline") {
+      // Radiant polygonal / crystalline facets
+      for (let i = 0; i < 30; i++) {
         const x = rand() * size;
         const y = rand() * size;
-        const rad = 10 + rand() * 25;
-        ctx.fillStyle = rand() > 0.5 ? "rgba(236, 72, 153, 0.25)" : "rgba(147, 51, 234, 0.35)";
+        const rad = 12 + rand() * 30;
+        ctx.fillStyle = rand() > 0.5 ? "rgba(255, 255, 255, 0.22)" : "rgba(124, 58, 237, 0.3)";
         ctx.beginPath();
         ctx.arc(x, y, rad, 0, Math.PI * 2);
         ctx.fill();
       }
-    } else if (textureType === "json" || textureType === "markdown") {
-      // Rocky cratered moon/asteroid surface
-      for (let i = 0; i < 50; i++) {
-        const x = rand() * size;
+    } else if (textureType === "desert" || textureType === "volcanic") {
+      // Dune striations & tectonic fissure veins
+      for (let i = 0; i < 25; i++) {
         const y = rand() * size;
-        const rad = 4 + rand() * 12;
-        const grad = ctx.createRadialGradient(x, y, 1, x, y, rad);
-        grad.addColorStop(0, "rgba(0, 0, 0, 0.45)");
-        grad.addColorStop(0.8, "rgba(255, 255, 255, 0.15)");
-        grad.addColorStop(1, "rgba(0, 0, 0, 0)");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(x, y, rad, 0, Math.PI * 2);
-        ctx.fill();
+        const h = 4 + rand() * 12;
+        ctx.fillStyle = rand() > 0.5 ? "rgba(0, 0, 0, 0.3)" : "rgba(255, 200, 100, 0.25)";
+        ctx.fillRect(0, y, size, h);
       }
     } else {
-      // Generic subtle planetary marbling
-      for (let i = 0; i < 25; i++) {
+      // Rocky / Icy cratered terrain
+      for (let i = 0; i < 45; i++) {
         const x = rand() * size;
         const y = rand() * size;
-        const rad = 20 + rand() * 30;
-        const grad = ctx.createRadialGradient(x, y, 3, x, y, rad);
-        const col = shadeRgb(baseRGB, (rand() - 0.5) * 0.3);
-        grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 0.4)`);
+        const rad = 4 + rand() * 16;
+        const grad = ctx.createRadialGradient(x, y, 1, x, y, rad);
+        grad.addColorStop(0, "rgba(0, 0, 0, 0.45)");
+        grad.addColorStop(0.75, "rgba(255, 255, 255, 0.2)");
         grad.addColorStop(1, "rgba(0, 0, 0, 0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
@@ -254,12 +239,12 @@ export function getPlanetTexture(
       }
     }
 
-    // Polar ice caps for terrestrial bodies
+    // Polar ice caps
     const capGrad = ctx.createLinearGradient(0, 0, 0, size);
-    capGrad.addColorStop(0, "rgba(255, 255, 255, 0.45)");
-    capGrad.addColorStop(0.08, "rgba(255, 255, 255, 0)");
-    capGrad.addColorStop(0.92, "rgba(255, 255, 255, 0)");
-    capGrad.addColorStop(1, "rgba(255, 255, 255, 0.45)");
+    capGrad.addColorStop(0, "rgba(255, 255, 255, 0.4)");
+    capGrad.addColorStop(0.07, "rgba(255, 255, 255, 0)");
+    capGrad.addColorStop(0.93, "rgba(255, 255, 255, 0)");
+    capGrad.addColorStop(1, "rgba(255, 255, 255, 0.4)");
     ctx.fillStyle = capGrad;
     ctx.fillRect(0, 0, size, size);
 
@@ -278,19 +263,17 @@ export function getPlanetBumpMap(textureType: PlanetTextureType, size = 128): TH
     const ctx = canvas.getContext("2d")!;
     const rand = createPRNG(size * 17);
 
-    // Medium gray base (neutral relief)
     ctx.fillStyle = "#808080";
     ctx.fillRect(0, 0, size, size);
 
-    // Add crater/ridge variations
-    const features = textureType === "markdown" || textureType === "json" ? 40 : 20;
+    const features = 25;
     for (let i = 0; i < features; i++) {
       const x = rand() * size;
       const y = rand() * size;
-      const r = 3 + rand() * 12;
+      const r = 3 + rand() * 14;
       const grad = ctx.createRadialGradient(x, y, 1, x, y, r);
-      grad.addColorStop(0, "#404040"); // Pit
-      grad.addColorStop(0.7, "#c0c0c0"); // Rim ridge
+      grad.addColorStop(0, "#404040");
+      grad.addColorStop(0.7, "#c0c0c0");
       grad.addColorStop(1, "#808080");
       ctx.fillStyle = grad;
       ctx.beginPath();
@@ -311,7 +294,7 @@ export function getMoonTexture(colorHex: string, size = 128): THREE.CanvasTextur
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext("2d")!;
-    const rand = createPRNG(size * 29);
+    const rand = createPRNG(stringToSeed(colorHex) + size * 29);
 
     ctx.fillStyle = colorHex;
     ctx.fillRect(0, 0, size, size);
@@ -320,7 +303,7 @@ export function getMoonTexture(colorHex: string, size = 128): THREE.CanvasTextur
     for (let i = 0; i < 30; i++) {
       const x = rand() * size;
       const y = rand() * size;
-      const r = 2 + rand() * 9;
+      const r = 2 + rand() * 10;
       const grad = ctx.createRadialGradient(x, y, 1, x, y, r);
       grad.addColorStop(0, "rgba(0, 0, 0, 0.55)");
       grad.addColorStop(0.75, "rgba(255, 255, 255, 0.2)");
@@ -374,7 +357,6 @@ export function getStarTexture(colorHex = "#f59e0b", size = 256): THREE.CanvasTe
     const ctx = canvas.getContext("2d")!;
     const rand = createPRNG(size * 71);
 
-    // Warm solar base
     ctx.fillStyle = colorHex;
     ctx.fillRect(0, 0, size, size);
 
@@ -384,7 +366,7 @@ export function getStarTexture(colorHex = "#f59e0b", size = 256): THREE.CanvasTe
       const y = rand() * size;
       const r = 10 + rand() * 30;
       const grad = ctx.createRadialGradient(x, y, 2, x, y, r);
-      grad.addColorStop(0, "#fffbeb"); // Bright hot core
+      grad.addColorStop(0, "#fffbeb");
       grad.addColorStop(0.4, "#fbbf24");
       grad.addColorStop(1, "rgba(217, 119, 6, 0)");
       ctx.fillStyle = grad;

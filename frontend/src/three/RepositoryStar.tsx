@@ -6,10 +6,12 @@ import { useNavigation } from "@/hooks/useNavigation";
 import { positionsRegistry } from "./positionsRegistry";
 import { getStarMaterial } from "./PlanetMaterial";
 import { getStarCoronaTexture } from "./PlanetTextures";
-import type { RepositoryNode } from "./sceneTypes";
+import { FileMoon } from "./FileMoon";
+import type { RepositoryNode, FileMoon as FileMoonType } from "./sceneTypes";
 
 interface RepositoryStarProps {
   repository: RepositoryNode;
+  rootFiles?: FileMoonType[];
 }
 
 // ─── Solar Flare / Prominence Particles ──────────────────────────────────────
@@ -63,7 +65,7 @@ function SolarFlares({ radius, color }: { radius: number; color: string }) {
 
 // ─── Central Repository Star ─────────────────────────────────────────────────
 
-export function RepositoryStar({ repository }: RepositoryStarProps) {
+export function RepositoryStar({ repository, rootFiles = [] }: RepositoryStarProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const coronaRef = useRef<THREE.Sprite>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -187,11 +189,16 @@ export function RepositoryStar({ repository }: RepositoryStarProps) {
               <span>{repository.name}</span>
             </div>
             <div className="text-[11px] text-mist-400 mt-1 font-mono">
-              Central Star • {repository.fileCount} File Planets
+              Central Star • {repository.folderCount} Folders • {repository.fileCount} Files
             </div>
           </div>
         </Html>
       )}
+
+      {/* Root-Level File Moons (e.g. README.md, package.json orbiting central star directly) */}
+      {rootFiles.map((moon) => (
+        <FileMoon key={moon.id} moon={moon} />
+      ))}
     </group>
   );
 }

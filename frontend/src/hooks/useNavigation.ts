@@ -19,6 +19,7 @@ import type {
 
 import { apiFetch, wsUrl } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { positionsRegistry } from "@/three/positionsRegistry";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7860";
 const WS_BASE = import.meta.env.VITE_WS_URL || "ws://localhost:7860";
@@ -90,29 +91,42 @@ function getConstellationColor(constellationName: string, theme: ThemeColors): s
   return theme.constellation_colors[key] || theme.constellation_colors["Default"] || theme.star_color;
 }
 
-import { getLanguageVisualIdentity } from "@/three/PlanetTextures";
+import { getFolderVisualIdentity, getFileVisualIdentity } from "@/three/PlanetTextures";
 
 // ─── Build Space Graph from Backend Scan ─────────────────────────────────────
 
-function buildSpaceGraphFromScan(scanData: any, theme: ThemeColors): SpaceObject[] {
+function buildSpaceGraphFromScan(scanData: any, _theme: ThemeColors): SpaceObject[] {
   const graph: SpaceObject[] = [];
   if (!scanData) return graph;
 
   const repoName = scanData.galaxy || "Repository";
   const starId = "repository-star";
 
-  // 1. Flatten all source files across the entire codebase into individual file planets
-  const allPlanets: any[] = [];
-  if (scanData.constellations) {
+  // 1. Gather all files across all constellations and stars
+  interface RawFile {
+    name: string;
+    path: string;
+    size_bytes?: number;
+    lines?: number;
+    language?: string;
+    moons?: any[];
+  }
+
+  const rawFiles: RawFile[] = [];
+
+  if (scanData.constellations && Array.isArray(scanData.constellations)) {
     scanData.constellations.forEach((c: any) => {
-      if (c.stars) {
+      if (c.stars && Array.isArray(c.stars)) {
         c.stars.forEach((s: any) => {
-          if (s.planets) {
+          if (s.planets && Array.isArray(s.planets)) {
             s.planets.forEach((p: any) => {
-              allPlanets.push({
-                ...p,
-                directory: s.path || "",
-                folderName: s.name || "",
+              rawFiles.push({
+                name: p.name,
+                path: (p.path || p.name).replace(/\\/g, "/"),
+                size_bytes: p.size_bytes || 1000,
+                lines: p.lines || 25,
+                language: p.language || p.name.split(".").pop() || "text",
+                moons: p.moons || [],
               });
             });
           }
@@ -121,7 +135,25 @@ function buildSpaceGraphFromScan(scanData: any, theme: ThemeColors): SpaceObject
     });
   }
 
-  // 2. Exactly ONE Central Star representing the currently selected repository
+  // 2. Separate into Top-Level Folders and Root-Level Files
+  // Top-level folders are the first directory component in relative paths: e.g. "backend/api/auth.py" -> "backend"
+  const folderBuckets = new Map<string, RawFile[]>();
+  const rootFiles: RawFile[] = [];
+
+  rawFiles.forEach((file) => {
+    const parts = file.path.split("/").filter(Boolean);
+    if (parts.length > 1) {
+      const topFolder = parts[0];
+      if (!folderBuckets.has(topFolder)) {
+        folderBuckets.set(topFolder, []);
+      }
+      folderBuckets.get(topFolder)!.push(file);
+    } else {
+      rootFiles.push(file);
+    }
+  });
+
+  // 3. Exactly ONE Central Star representing the currently selected repository
   graph.push({
     id: starId,
     kind: "star",
@@ -131,80 +163,123 @@ function buildSpaceGraphFromScan(scanData: any, theme: ThemeColors): SpaceObject
     scale: 1.0,
     color: "#f59e0b",
     atmosphereColor: "#fbbf24",
-    fileCount: allPlanets.length,
+    fileCount: rawFiles.length,
     description: "Repository Central Star",
   });
 
-  if (allPlanets.length === 0) return graph;
+  // 4. Folder Planets (folders orbit the central repository star in separated tracks)
+  const folderNames = Array.from(folderBuckets.keys()).sort();
+  const totalFolders = folderNames.length;
+  const planetsPerTrack = totalFolders > 8 ? 3 : totalFolders > 4 ? 2 : 1;
+  const baseOrbitRadius = 8.5;
+  const trackSpacing = 4.8;
 
-  // 3. File Planets (files orbit the central repository star in separated bands)
-  const totalFiles = allPlanets.length;
-  const planetsPerTrack = totalFiles > 24 ? 3 : totalFiles > 12 ? 2 : 1;
-  const baseOrbitRadius = 4.8;
-  const trackSpacing = 2.1;
-
-  allPlanets.forEach((planet: any, index: number) => {
-    const filePath = planet.path || planet.name;
-    const planetId = `planet-${filePath}`;
-    const lang = planet.language || filePath.split(".").pop() || "text";
-    const visual = getLanguageVisualIdentity(filePath, lang);
+  folderNames.forEach((folderName, index) => {
+    const filesInFolder = folderBuckets.get(folderName)!;
+    const folderId = `folder-${folderName}`;
+    const visual = getFolderVisualIdentity(folderName);
 
     const trackIndex = Math.floor(index / planetsPerTrack);
     const slotIndex = index % planetsPerTrack;
     const orbitRadius = baseOrbitRadius + trackIndex * trackSpacing;
-    const pAngle = (slotIndex * (2 * Math.PI)) / planetsPerTrack + trackIndex * 0.75;
-    const orbitSpeed = 0.045 / Math.sqrt(orbitRadius / baseOrbitRadius);
+    const pAngle = (slotIndex * (2 * Math.PI)) / planetsPerTrack + trackIndex * 0.95;
+    const orbitSpeed = 0.032 / Math.sqrt(orbitRadius / baseOrbitRadius);
 
-    const fileBytes = planet.size_bytes || 1000;
-    const planetScale = 0.38 + Math.min(fileBytes / 30000, 1.0) * 0.35;
+    // Aggregate folder metrics
+    const totalBytes = filesInFolder.reduce((sum, f) => sum + (f.size_bytes || 1000), 0);
+    const normalizedFiles = Math.min(filesInFolder.length / 25, 1.0);
+    const normalizedSize = Math.min(totalBytes / 150000, 1.0);
+    const folderScale = Math.min(Math.max(1.15 + normalizedFiles * 0.45 + normalizedSize * 0.25, 1.15), 1.85);
+
+    // Compute language breakdown for folder
+    const langCounts: Record<string, number> = {};
+    filesInFolder.forEach((f) => {
+      const l = f.language || "text";
+      langCounts[l] = (langCounts[l] || 0) + 1;
+    });
 
     graph.push({
-      id: planetId,
-      kind: "planet",
-      name: planet.name,
+      id: folderId,
+      kind: "folder",
+      name: folderName,
       parentId: starId,
-      filePath,
-      description: planet.directory ? `${planet.directory}/` : "",
-      language: lang,
+      filePath: folderName,
+      description: `${filesInFolder.length} files • ${folderName}/`,
+      language: filesInFolder[0]?.language || "folder",
       position: {
         x: orbitRadius * Math.cos(pAngle),
         y: 0,
         z: orbitRadius * Math.sin(pAngle),
       },
-      scale: planetScale,
+      scale: folderScale,
       color: visual.color,
       atmosphereColor: visual.atmosphereColor,
       orbitRadius,
       orbitSpeed,
-      inclination: ((index % 7) - 3) * 0.035,
+      inclination: ((index % 5) - 2) * 0.03,
       direction: index % 2 === 0 ? 1 : -1,
       roughness: 0.65,
       metalness: 0.12,
-      hasRings: index % 5 === 0,
+      fileCount: filesInFolder.length,
+      hasRings: index % 3 === 0,
     });
 
-    // Populate initial moons extracted from backend parser
-    if (planet.moons && Array.isArray(planet.moons)) {
-      planet.moons.forEach((sym: any, mIdx: number) => {
-        graph.push({
-          id: `moon-${filePath}-${sym.name}`,
-          kind: "moon",
-          name: sym.type === "class" ? `class ${sym.name}` : `${sym.name}()`,
-          parentId: planetId,
-          symbolType: sym.type,
-          symbolLine: sym.start_line,
-          symbolEndLine: sym.end_line,
-          symbolSummary: sym.summary || "",
-          position: { x: 0, y: 0, z: 0 },
-          scale: 0.2,
-          color: sym.type === "class" ? "#c084fc" : "#fbbf24",
-          orbitRadius: 2.2 + mIdx * 0.6,
-          orbitSpeed: 0.12 + 0.04 / (mIdx + 1),
-          inclination: ((mIdx % 3) - 1) * 0.25,
-          direction: mIdx % 2 === 0 ? 1 : -1,
-        });
+    // 5. File Moons orbiting their parent folder planet
+    filesInFolder.forEach((file, fIdx) => {
+      const fileId = `file-${file.path}`;
+      const ext = file.name.includes(".") ? file.name.split(".").pop() || "" : "";
+      const fileVisual = getFileVisualIdentity(file.path, file.language);
+
+      const mOrbitRadius = folderScale * 1.75 + fIdx * 0.75;
+      const mOrbitSpeed = 0.12 / (1 + fIdx * 0.12);
+      const mPhase = (fIdx * (2 * Math.PI)) / Math.max(1, filesInFolder.length) + fIdx * 0.45;
+
+      graph.push({
+        id: fileId,
+        kind: "file",
+        name: file.name,
+        parentId: folderId,
+        filePath: file.path,
+        description: file.path,
+        language: file.language || ext || "text",
+        position: { x: 0, y: 0, z: 0 },
+        scale: 0.22,
+        color: fileVisual.color,
+        atmosphereColor: fileVisual.atmosphereColor,
+        orbitRadius: mOrbitRadius,
+        orbitSpeed: mOrbitSpeed,
+        inclination: ((fIdx % 3) - 1) * 0.18,
+        direction: fIdx % 2 === 0 ? 1 : -1,
       });
-    }
+    });
+  });
+
+  // 6. Root-Level Files (files with no parent folder, e.g. README.md, package.json)
+  rootFiles.forEach((file, rIdx) => {
+    const fileId = `file-${file.path}`;
+    const ext = file.name.includes(".") ? file.name.split(".").pop() || "" : "";
+    const fileVisual = getFileVisualIdentity(file.path, file.language);
+
+    const starOrbitRadius = 3.6 + rIdx * 0.7;
+    const starOrbitSpeed = 0.07 / (1 + rIdx * 0.08);
+
+    graph.push({
+      id: fileId,
+      kind: "file",
+      name: file.name,
+      parentId: starId,
+      filePath: file.path,
+      description: file.path,
+      language: file.language || ext || "text",
+      position: { x: 0, y: 0, z: 0 },
+      scale: 0.22,
+      color: fileVisual.color,
+      atmosphereColor: fileVisual.atmosphereColor,
+      orbitRadius: starOrbitRadius,
+      orbitSpeed: starOrbitSpeed,
+      inclination: ((rIdx % 4) - 1.5) * 0.12,
+      direction: rIdx % 2 === 0 ? 1 : -1,
+    });
   });
 
   return graph;
@@ -412,175 +487,135 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     }
   }, [themeColors, workspaceStatus.repo_name]);
 
-  // ── Fetch file details when a planet/star/moon is selected
+  // ── Fetch details when a folder planet/file moon/repository star is selected
   useEffect(() => {
     if (!displayedId) return;
 
     const object = spaceGraph.find((o) => o.id === displayedId);
     if (!object) return;
 
-    const isPlanet = object.kind === "planet";
-    const isMoon = object.kind === "moon";
+    const isFolder = object.kind === "folder" || object.kind === "planet";
+    const isFile = object.kind === "file" || object.kind === "moon";
 
-    if (isPlanet || isMoon) {
-      // It's a file or a symbol inside a file — fetch parent file content and symbols
-      let filePath = "";
-      let planetName = "";
-      let planetId = "";
+    if (isFolder) {
+      // 🪐 Folder Planet Selected
+      setActiveFileContent(null);
+      const childFiles = spaceGraph.filter(
+        (o) => (o.kind === "file" || o.kind === "moon") && o.parentId === object.id
+      );
 
-      if (isPlanet) {
-        filePath = (object as any).filePath || object.id.replace("planet-", "");
-        planetName = object.name;
-        planetId = object.id;
-      } else {
-        const parentPlanet = spaceGraph.find(o => o.id === object.parentId);
-        if (parentPlanet) {
-          filePath = (parentPlanet as any).filePath || parentPlanet.id.replace("planet-", "");
-          planetName = parentPlanet.name;
-          planetId = parentPlanet.id;
-        } else {
-          filePath = object.id.replace("moon-", "").split("-")[0];
-          planetName = filePath.split("/").pop() || "File";
-          planetId = `planet-${filePath}`;
-        }
-      }
+      // Compute folder metrics and language breakdown
+      const langCounts: Record<string, number> = {};
+      childFiles.forEach((cf) => {
+        const lang = cf.language || "text";
+        langCounts[lang] = (langCounts[lang] || 0) + 1;
+      });
+
+      const totalFilesCount = childFiles.length;
+      const languagesBreakdown = Object.entries(langCounts)
+        .map(([language, count]) => ({
+          language,
+          percentage: totalFilesCount > 0 ? Math.round((count / totalFilesCount) * 100) : 0,
+        }))
+        .sort((a, b) => b.percentage - a.percentage);
+
+      const topFiles = childFiles.slice(0, 8).map((cf) => cf.name);
+
+      setActiveFileDetails({
+        id: object.id,
+        name: object.name,
+        type: "folder",
+        description: `${object.name}/`,
+        language: languagesBreakdown[0]?.language,
+        dependencies: [],
+        summary: `Contains ${totalFilesCount} file${totalFilesCount !== 1 ? "s" : ""} across ${languagesBreakdown.map((l) => `${l.language} (${l.percentage}%)`).join(", ") || "various types"}.`,
+        fileCount: totalFilesCount,
+        folderCount: (object as any).folderCount || 0,
+        languagesBreakdown,
+        topFiles,
+        stats: [
+          { label: "Files", value: String(totalFilesCount) },
+          { label: "Primary Language", value: languagesBreakdown[0]?.language || "None" },
+          { label: "Track Radius", value: `${(object.orbitRadius || 0).toFixed(1)} AU` },
+        ],
+        codePreview: [],
+        symbols: [],
+      });
+    } else if (isFile) {
+      // 🌙 File Moon Selected
+      const filePath = (object as any).filePath || object.name;
+      const parentFolder = spaceGraph.find((o) => o.id === object.parentId);
 
       const fetchFile = async () => {
         try {
-          const res = await apiFetch(
-            `/api/file?path=${encodeURIComponent(filePath)}`
-          );
+          const res = await apiFetch(`/api/file?path=${encodeURIComponent(filePath)}`);
           if (!res.ok) return;
           const data = await res.json();
 
           setActiveFileContent(data.content);
 
           const lines = data.content ? data.content.split("\n").length : 0;
-          const functions = (data.symbols || []).filter((s: any) => s.type === "function").length;
-          const classes = (data.symbols || []).filter((s: any) => s.type === "class").length;
+          const symbols = data.symbols || [];
+          const functions = symbols.filter((s: any) => s.type === "function").length;
+          const classes = symbols.filter((s: any) => s.type === "class").length;
+          const imports = data.imports || [];
 
           const previewLines = (data.content || "")
             .split("\n")
-            .slice(0, 25)
+            .slice(0, 30)
             .map((line: string, i: number) => ({ line: i + 1, content: line }));
 
-          if (isPlanet) {
-            setActiveFileDetails({
-              id: displayedId,
-              name: object.name,
-              type: "planet",
-              description: `${filePath}`,
-              language: data.language || (object as any).language || "text",
-              dependencies: data.imports || [],
-              summary: `${classes} class${classes !== 1 ? "es" : ""}, ${functions} function${functions !== 1 ? "s" : ""}, ${lines} lines`,
-              stats: [
-                { label: "Lines", value: String(lines) },
-                { label: "Functions", value: String(functions) },
-                { label: "Classes", value: String(classes) },
-                { label: "Imports", value: String((data.imports || []).length) },
-              ],
-              codePreview: previewLines,
-              symbols: data.symbols || [],
-            });
-          } else {
-            // It's a moon (symbol)
-            setActiveFileDetails({
-              id: object.id,
-              name: object.name,
-              type: "moon",
-              description: `Symbol in file: ${filePath}`,
-              language: data.language || "text",
-              dependencies: [],
-              summary: (object as any).symbolSummary || `Line ${(object as any).symbolLine || "?"}`,
-              stats: [
-                { label: "Start Line", value: String((object as any).symbolLine || 1) },
-                { label: "Symbol Type", value: String((object as any).symbolType || "definition") },
-                { label: "File Lines", value: String(lines) },
-              ],
-              codePreview: previewLines,
-              symbols: [],
-              parentPlanetId: planetId,
-              parentPlanetName: planetName,
-              parentPlanetPath: filePath
-            } as any);
-          }
-
-          // Inject moons (symbols) into the spaceGraph
-          if (isPlanet && data.symbols && data.symbols.length > 0) {
-            setSpaceGraph((prev) => {
-              const cleaned = prev.filter(
-                (o) => !(o.kind === "moon" && o.parentId === displayedId)
-              );
-              const moons: SpaceObject[] = data.symbols
-                .slice(0, 10)
-                .map((sym: any, idx: number) => {
-                  // Spread moons out wider from the parent planet
-                  const mOrbit = 0.8 + idx * 0.45;
-                  const mAngle = (idx * (2 * Math.PI)) / Math.max(1, Math.min(10, data.symbols.length));
-
-                  // Calculate symbol length in lines
-                  const symbolLines = (sym.end_line && sym.start_line)
-                    ? (sym.end_line - sym.start_line + 1)
-                    : 10;
-                  
-                  // Scale moon proportionally, keeping them much smaller than planets
-                  const moonScale = 0.04 + Math.min(symbolLines / 150, 1.0) * 0.06;
-
-                  return {
-                    id: `moon-${filePath}-${sym.name}`,
-                    kind: "moon" as const,
-                    name: sym.type === "class" ? `class ${sym.name}` : `${sym.name}()`,
-                    parentId: displayedId,
-                    symbolType: sym.type,
-                    symbolLine: sym.start_line,
-                    symbolSummary: sym.summary || "",
-                    position: {
-                      x: mOrbit * Math.cos(mAngle),
-                      y: 0,
-                      z: mOrbit * Math.sin(mAngle),
-                    },
-                    scale: moonScale,
-                    color: sym.type === "class" ? "#c084fc" : "#FBBF24",
-                    orbitRadius: mOrbit,
-                    // PHASE 7.6 — calm moon orbits (further scaled by
-                    // GLOBAL_ORBIT_SCALE in OrbitingBody)
-                    orbitSpeed: 0.12 + 0.05 / (idx + 1),
-                    inclination: (Math.random() - 0.5) * 0.5,
-                    direction: idx % 2 === 0 ? 1 : -1,
-                  };
-                });
-              return [...cleaned, ...moons];
-            });
-          }
+          setActiveFileDetails({
+            id: object.id,
+            name: object.name,
+            type: "file",
+            description: filePath,
+            language: data.language || (object as any).language || "text",
+            dependencies: imports,
+            summary: `${classes} class${classes !== 1 ? "es" : ""}, ${functions} function${functions !== 1 ? "s" : ""}, ${lines} lines, ${imports.length} imports`,
+            stats: [
+              { label: "Lines", value: String(lines) },
+              { label: "Functions", value: String(functions) },
+              { label: "Classes", value: String(classes) },
+              { label: "Imports", value: String(imports.length) },
+            ],
+            codePreview: previewLines,
+            symbols,
+            parentFolderId: parentFolder?.id,
+            parentFolderName: parentFolder?.name,
+          });
         } catch (e) {
-          console.error("Failed to fetch file/symbol details:", e);
+          console.error("Failed to fetch file details:", e);
         }
       };
 
       fetchFile();
     } else {
-      // Repository Central Star
+      // ⭐ Repository Central Star Selected
       setActiveFileContent(null);
-      const totalFiles = spaceGraph.filter((o) => o.kind === "planet").length;
+      const folderPlanets = spaceGraph.filter((o) => o.kind === "folder" || o.kind === "planet");
+      const fileMoons = spaceGraph.filter((o) => o.kind === "file" || o.kind === "moon");
+
       setActiveFileDetails({
         id: object.id,
         name: object.name,
         type: "star",
         description: "Repository Central Star",
-        language: undefined,
+        language: repositories[0]?.language,
         dependencies: [],
         summary:
           repositories[0]?.description ||
-          "Unified repository solar system — files orbit as planets, functions/classes orbit as moons.",
+          `Repository solar system: ${folderPlanets.length} folder planets and ${fileMoons.length} files.`,
         stats: [
-          { label: "File Planets", value: String(object.fileCount ?? totalFiles) },
+          { label: "Folders", value: String(folderPlanets.length) },
+          { label: "Total Files", value: String(fileMoons.length) },
           { label: "Language", value: repositories[0]?.language || "Multi" },
         ],
         codePreview: [],
         symbols: [],
       });
     }
-  }, [displayedId, spaceGraph]);
+  }, [displayedId, spaceGraph, repositories]);
 
   // ── Breadcrumb chain
   const getAncestorChain = useCallback(
@@ -674,13 +709,28 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   // never mutates the repository or the spaceGraph itself).
   const [cutIds, setCutIds] = useState<Set<string>>(new Set());
   const cutObject = useCallback((id: string) => {
+    const target = spaceGraph.find((o) => o.id === id);
+    const fallbackId = target?.parentId || rootId;
+
+    // 1. Mark as cut
     setCutIds((prev) => {
       const next = new Set(prev);
       next.add(id);
       return next;
     });
+
+    // 2. Clear from selection and position registry
     setSelectedId((prev) => (prev === id ? null : prev));
-  }, []);
+    positionsRegistry.clear(id);
+
+    // 3. Smoothly navigate camera & display back to parent or root star
+    if (focusId === id || displayedId === id) {
+      setFocusId(fallbackId);
+      setDisplayedId(fallbackId);
+      setIsTransitioning(true);
+    }
+  }, [spaceGraph, rootId, focusId, displayedId]);
+
   const restoreAll = useCallback(() => setCutIds(new Set()), []);
   const isCut = useCallback((id: string) => cutIds.has(id), [cutIds]);
 

@@ -4,15 +4,17 @@
  * mock JSON for real FastAPI responses later requires no component changes.
  */
 
-export type SpaceObjectKind = "repository" | "planet" | "moon" | "workspace" | "galaxy" | "star";
+export type SpaceObjectKind = "repository" | "folder" | "file" | "planet" | "moon" | "workspace" | "galaxy" | "star";
 
-/** Maps directly to repository structure per the product's solar system metaphor. */
+/** Maps directly to repository structure per the product's solar system metaphor: Star -> Folder Planets -> File Moons */
 export const SPACE_OBJECT_LABELS: Record<SpaceObjectKind, string> = {
   repository: "Repository Star",
   star: "Repository Star",
   galaxy: "Repository Star",
-  planet: "File Planet",
-  moon: "Symbol Moon",
+  folder: "Folder Planet",
+  planet: "Folder Planet",
+  file: "File Moon",
+  moon: "File Moon",
   workspace: "Universe",
 };
 
@@ -75,6 +77,15 @@ export interface ObjectDetails {
   summary: string;
   stats: RepositoryStat[];
   codePreview: CodePreviewLine[];
+  /** Folder-specific metadata */
+  fileCount?: number;
+  folderCount?: number;
+  totalSize?: string;
+  languagesBreakdown?: Array<{ language: string; percentage: number }>;
+  topFiles?: string[];
+  /** File-specific parent references */
+  parentFolderId?: string;
+  parentFolderName?: string;
   /** Parsed symbols (classes/functions) from /api/file */
   symbols?: Array<{
     name: string;

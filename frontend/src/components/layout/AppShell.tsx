@@ -85,7 +85,7 @@ export function AppShell({ children }: AppShellProps) {
   };
 
   // Find root ID dynamically
-  const rootId = spaceGraph.find((o) => o.parentId === null)?.id ?? "galaxy-root";
+  const rootId = spaceGraph.find((o) => o.parentId === null)?.id ?? "repository-star";
 
   // Active interaction: either a planet/star is selected, or the chatbot is explicitly opened via the orb
   const isInteractionActive = (displayedId !== rootId) || isMissionControlOpen;
