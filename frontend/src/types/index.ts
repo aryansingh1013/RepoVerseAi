@@ -4,15 +4,16 @@
  * mock JSON for real FastAPI responses later requires no component changes.
  */
 
-export type SpaceObjectKind = "workspace" | "galaxy" | "star" | "planet" | "moon";
+export type SpaceObjectKind = "repository" | "planet" | "moon" | "workspace" | "galaxy" | "star";
 
-/** Maps directly to repository structure per the product's space metaphor. */
+/** Maps directly to repository structure per the product's solar system metaphor. */
 export const SPACE_OBJECT_LABELS: Record<SpaceObjectKind, string> = {
+  repository: "Repository Star",
+  star: "Repository Star",
+  galaxy: "Repository Star",
+  planet: "File Planet",
+  moon: "Symbol Moon",
   workspace: "Universe",
-  galaxy: "Repository",
-  star: "Folder",
-  planet: "File",
-  moon: "Class / Function",
 };
 
 export interface Vector3Tuple {

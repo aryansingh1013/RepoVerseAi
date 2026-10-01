@@ -152,8 +152,8 @@ export function LeftSidebar() {
   }
 
   // DEFAULT VIEW: Repositories explorer tree
-  const findGalaxyIdForRepo = (repoName: string): string | undefined => {
-    return spaceGraph.find((o) => o.kind === "galaxy" && o.name === repoName)?.id;
+  const findStarIdForRepo = (repoName: string): string | undefined => {
+    return spaceGraph.find((o) => (o.kind === "star" || o.kind === "galaxy") && o.name === repoName)?.id;
   };
 
   function SectionHeader({ icon: Icon, label }: { icon: typeof FolderGit2; label: string }) {
@@ -168,7 +168,7 @@ export function LeftSidebar() {
   const activeRepos = repositories.length > 0 ? repositories : [
     {
       id: "repo-active-fallback",
-      name: spaceGraph.find(o => o.kind === "galaxy")?.name || "Repository",
+      name: spaceGraph.find(o => o.kind === "star" || o.kind === "galaxy")?.name || "Repository",
       description: "Active local workspace folder",
       language: "Source Code",
       updatedAt: "Active Now",
@@ -186,12 +186,12 @@ export function LeftSidebar() {
       <SectionHeader icon={FolderGit2} label="Repositories" />
       <div className="px-2 space-y-1">
         {activeRepos.map((repo) => {
-          const galaxyId = findGalaxyIdForRepo(repo.name) || spaceGraph.find(o => o.kind === "galaxy")?.id;
+          const starId = findStarIdForRepo(repo.name) || spaceGraph.find(o => o.kind === "star" || o.kind === "galaxy")?.id || "repository-star";
           return (
             <button
               key={repo.id}
-              disabled={!galaxyId}
-              onClick={() => galaxyId && jumpTo(galaxyId)}
+              disabled={!starId}
+              onClick={() => starId && jumpTo(starId)}
               className="w-full text-left rounded-md px-2.5 py-2 hover:bg-void-700/60 transition-colors group disabled:opacity-50 disabled:hover:bg-transparent"
             >
               <div className="flex items-center justify-between">
@@ -251,7 +251,7 @@ export function LeftSidebar() {
 
       <div className="mt-auto px-3 py-3 border-t border-white/5 flex items-center gap-2 text-[11px] text-mist-500">
         <Layers className="h-3.5 w-3.5" />
-        Layout · Universe → Galaxy → Star → Planet → Moon
+        Repository → Central Star → File Planets → Moons
       </div>
     </motion.aside>
   );

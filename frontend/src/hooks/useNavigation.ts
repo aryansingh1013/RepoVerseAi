@@ -90,6 +90,8 @@ function getConstellationColor(constellationName: string, theme: ThemeColors): s
   return theme.constellation_colors[key] || theme.constellation_colors["Default"] || theme.star_color;
 }
 
+import { getLanguageVisualIdentity } from "@/three/PlanetTextures";
+
 // ─── Build Space Graph from Backend Scan ─────────────────────────────────────
 
 function buildSpaceGraphFromScan(scanData: any, theme: ThemeColors): SpaceObject[] {
@@ -97,109 +99,89 @@ function buildSpaceGraphFromScan(scanData: any, theme: ThemeColors): SpaceObject
   if (!scanData) return graph;
 
   const repoName = scanData.galaxy || "Repository";
-  const galaxyId = "galaxy-root";
+  const starId = "repository-star";
 
-  // 1. Repository node (galaxy core)
+  // 1. Flatten all source files across the entire codebase into individual file planets
+  const allPlanets: any[] = [];
+  if (scanData.constellations) {
+    scanData.constellations.forEach((c: any) => {
+      if (c.stars) {
+        c.stars.forEach((s: any) => {
+          if (s.planets) {
+            s.planets.forEach((p: any) => {
+              allPlanets.push({
+                ...p,
+                directory: s.path || "",
+                folderName: s.name || "",
+              });
+            });
+          }
+        });
+      }
+    });
+  }
+
+  // 2. Exactly ONE Central Star representing the currently selected repository
   graph.push({
-    id: galaxyId,
-    kind: "galaxy",
+    id: starId,
+    kind: "star",
     name: repoName,
     parentId: null,
     position: { x: 0, y: 0, z: 0 },
     scale: 1.0,
-    color: theme.galaxy_accent,
-    atmosphereColor: "#3a1a7d",
+    color: "#f59e0b",
+    atmosphereColor: "#fbbf24",
+    fileCount: allPlanets.length,
+    description: "Repository Central Star",
   });
 
-  if (!scanData.constellations || scanData.constellations.length === 0) return graph;
+  if (allPlanets.length === 0) return graph;
 
-  // 2. Flatten all stars, keeping track of their constellation
-  const allStars: Array<{ star: any; constellationName: string }> = [];
-  scanData.constellations.forEach((c: any) => {
-    if (c.stars) {
-      c.stars.forEach((s: any) => {
-        allStars.push({ star: s, constellationName: c.name });
-      });
-    }
-  });
+  // 3. File Planets (files orbit the central repository star in separated bands)
+  const totalFiles = allPlanets.length;
+  const planetsPerTrack = totalFiles > 24 ? 3 : totalFiles > 12 ? 2 : 1;
+  const baseOrbitRadius = 4.8;
+  const trackSpacing = 2.1;
 
-  // 3. Stars (folders)
-  allStars.forEach(({ star, constellationName }, starIndex) => {
-    const starId = `star-${star.path || star.name}`;
-    const fileCount = star.planets ? star.planets.length : 0;
-    const totalStars = allStars.length;
-    // Spread stars out wider
-    const orbitRadius = 9.0 + starIndex * 4.5;
-    const orbitSpeed = 0.012 + 0.04 / (starIndex + 1);
-    const angle = (starIndex * (2 * Math.PI)) / Math.max(1, totalStars);
+  allPlanets.forEach((planet: any, index: number) => {
+    const filePath = planet.path || planet.name;
+    const planetId = `planet-${filePath}`;
+    const lang = planet.language || filePath.split(".").pop() || "text";
+    const visual = getLanguageVisualIdentity(filePath, lang);
 
-    const starColor = getConstellationColor(constellationName, theme);
+    const trackIndex = Math.floor(index / planetsPerTrack);
+    const slotIndex = index % planetsPerTrack;
+    const orbitRadius = baseOrbitRadius + trackIndex * trackSpacing;
+    const pAngle = (slotIndex * (2 * Math.PI)) / planetsPerTrack + trackIndex * 0.75;
+    const orbitSpeed = 0.045 / Math.sqrt(orbitRadius / baseOrbitRadius);
 
-    // Stars (Folders): Scale depends on number of files it contains
-    const starScale = 0.8 + Math.min(fileCount / 12, 1.0) * 0.7;
+    const fileBytes = planet.size_bytes || 1000;
+    const planetScale = 0.38 + Math.min(fileBytes / 30000, 1.0) * 0.35;
 
     graph.push({
-      id: starId,
-      kind: "star",
-      name: star.name === "core" ? repoName : `${star.name}/`,
-      parentId: galaxyId,
-      // Store constellation name for display
-      description: constellationName,
+      id: planetId,
+      kind: "planet",
+      name: planet.name,
+      parentId: starId,
+      filePath,
+      description: planet.directory ? `${planet.directory}/` : "",
+      language: lang,
       position: {
-        x: orbitRadius * Math.cos(angle),
-        y: (Math.random() - 0.5) * 0.8,
-        z: orbitRadius * Math.sin(angle),
+        x: orbitRadius * Math.cos(pAngle),
+        y: 0,
+        z: orbitRadius * Math.sin(pAngle),
       },
-      fileCount,
-      scale: starScale,
-      color: starColor,
-      atmosphereColor: starColor + "80",
+      scale: planetScale,
+      color: visual.color,
+      atmosphereColor: visual.atmosphereColor,
       orbitRadius,
       orbitSpeed,
-      inclination: (Math.random() - 0.5) * 0.4,
-      direction: Math.random() > 0.5 ? 1 : -1,
+      inclination: ((index % 7) - 3) * 0.035,
+      direction: index % 2 === 0 ? 1 : -1,
+      roughness: 0.65,
+      metalness: 0.12,
+      hasRings: index % 5 === 0,
     });
-
-    // 4. Planets (files) orbiting each star
-    if (star.planets) {
-      star.planets.forEach((planet: any, planetIndex: number) => {
-        const planetId = `planet-${planet.path}`;
-        // Spread planets out wider
-        const pOrbitRadius = 2.5 + planetIndex * 1.5;
-        const pOrbitSpeed = 0.1 + 0.2 / (planetIndex + 1);
-        const pAngle = (planetIndex * (2 * Math.PI)) / Math.max(1, star.planets.length);
-        const lang = planet.language || "text";
-
-        // Planets (Files): Scale depends on file size in bytes
-        const fileBytes = planet.size_bytes || 1000;
-        const planetScale = 0.15 + Math.min(fileBytes / 20000, 1.0) * 0.25;
-
-        graph.push({
-          id: planetId,
-          kind: "planet",
-          name: planet.name,
-          parentId: starId,
-          // Store real file path for API calls
-          filePath: planet.path,
-          language: lang,
-          position: {
-            x: pOrbitRadius * Math.cos(pAngle),
-            y: (Math.random() - 0.5) * 0.3,
-            z: pOrbitRadius * Math.sin(pAngle),
-          },
-          scale: planetScale,
-          color: getLanguageColor(lang, theme),
-          atmosphereColor: getLanguageAtmosphereColor(lang),
-          orbitRadius: pOrbitRadius,
-          orbitSpeed: pOrbitSpeed,
-          inclination: (Math.random() - 0.5) * 0.3,
-          direction: Math.random() > 0.5 ? 1 : -1,
-          roughness: 0.55,
-          metalness: 0.15,
-          hasRings: planetIndex % 4 === 0,
-        });
-      });
-    }
   });
 
   return graph;
@@ -271,12 +253,12 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const [isScanning, setIsScanning] = useState(false);
 
   const rootId = useMemo(
-    () => spaceGraph.find((o) => o.parentId === null)?.id ?? "galaxy-root",
+    () => spaceGraph.find((o) => o.parentId === null)?.id ?? "repository-star",
     [spaceGraph]
   );
 
-  const [focusId, setFocusId] = useState("galaxy-root");
-  const [displayedId, setDisplayedId] = useState("galaxy-root");
+  const [focusId, setFocusId] = useState("repository-star");
+  const [displayedId, setDisplayedId] = useState("repository-star");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
@@ -554,30 +536,23 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
       fetchFile();
     } else {
-      // Star, galaxy — clear file details
+      // Repository Central Star
       setActiveFileContent(null);
+      const totalFiles = spaceGraph.filter((o) => o.kind === "planet").length;
       setActiveFileDetails({
         id: object.id,
         name: object.name,
-        type: object.kind,
-        description:
-          object.kind === "galaxy"
-            ? "Repository root — the galaxy core"
-            : object.kind === "star"
-            ? `Folder containing ${object.fileCount ?? 0} files`
-            : `${(object as any).symbolType || "symbol"} — line ${(object as any).symbolLine || "?"}`,
+        type: "star",
+        description: "Repository Central Star",
         language: undefined,
         dependencies: [],
         summary:
-          object.kind === "star"
-            ? `This folder contains ${object.fileCount ?? 0} files spread across the codebase.`
-            : object.kind === "galaxy"
-            ? `The galaxy core — root of the entire repository.`
-            : `${(object as any).symbolSummary || "Code symbol"}`,
-        stats:
-          object.kind === "star"
-            ? [{ label: "Files", value: String(object.fileCount ?? 0) }]
-            : [],
+          repositories[0]?.description ||
+          "Unified repository solar system — files orbit as planets, functions/classes orbit as moons.",
+        stats: [
+          { label: "File Planets", value: String(object.fileCount ?? totalFiles) },
+          { label: "Language", value: repositories[0]?.language || "Multi" },
+        ],
         codePreview: [],
         symbols: [],
       });

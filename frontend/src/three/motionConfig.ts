@@ -9,21 +9,20 @@
 
 // ─── Orbital speeds (rad/s), by body kind ──────────────────────────────────
 export const ORBIT_SPEED = {
-  star: 0.04,     // folder systems around the galaxy core
-  planet: 0.075,  // files around their star
-  moon: 0.16,     // symbols around their planet (subordinate but alive)
+  star: 0.02,     // axial rotation of central repository star
+  planet: 0.045,  // file planets orbiting central star
+  moon: 0.12,     // symbols orbiting parent planet
 } as const;
 
 // Multiplier applied to per-object orbitSpeed data from the graph builder,
-// so legacy data (tuned fast) is scaled down to cinematic levels.
+// so speeds remain calm and cinematic.
 export const GLOBAL_ORBIT_SCALE = 0.35;
 
 // ─── Self-rotation speeds (rad/s) ──────────────────────────────────────────
 export const SELF_ROTATION = {
-  star: 0.18,
-  planet: 0.06,
-  moon: 0.03,
-  galaxy: 0.05,
+  star: 0.08,
+  planet: 0.08,
+  moon: 0.04,
 } as const;
 
 // ─── Camera / controls feel ────────────────────────────────────────────────
