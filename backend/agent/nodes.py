@@ -514,10 +514,10 @@ class AgentNodes:
                 summary_files = list(set([c["metadata"]["path"] for c in contexts if c.get("metadata") and "path" in c["metadata"]]))
                 response = (
                     f"I retrieved information from {', '.join(summary_files)} but could not synthesize a custom response because the AI model is currently offline or rate-limited.\n\n"
-                    "⚠️ **Troubleshooting Tip**: The shared Groq API Key has reached its daily rate limit (429 Rate Limit Exceeded).\n"
-                    "Please click the **Settings icon (⚙️)** in the top-right navbar and:\n"
-                    "1. Input your own personal Groq API Key or OpenAI API Key.\n"
-                    "2. Or, start a local Ollama server (`ollama run qwen2.5`) which is free and has no limits."
+                    "⚠️ **Troubleshooting Tip**: The primary local model (Ollama qwen3:8b) is not responding.\n"
+                    "Please check:\n"
+                    "1. Ollama is running (`ollama serve`) and the model is pulled (`ollama run qwen3:8b`).\n"
+                    "2. Or configure a cloud API key (Groq / OpenAI) in the Settings Panel (⚙️) as a fallback."
                     "\n\nHere is a list of relevant files and locations found:\n"
                 )
                 for c in contexts:

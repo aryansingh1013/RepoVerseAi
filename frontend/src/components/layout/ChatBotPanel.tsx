@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { Send, Sparkles, ChevronRight, Brain, X, Copy, Check } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
+import { useChat } from "@/hooks/useChat";
 import { clsx } from "@/utils/clsx";
 
 export function ChatBotPanel() {
@@ -21,6 +22,8 @@ export function ChatBotPanel() {
     submitMessage,
     selectedMessageId,
     setSelectedMessageId,
+  } = useChat();
+  const {
     setMissionControlOpen,
     jumpTo,
     spaceGraph

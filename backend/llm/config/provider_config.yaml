@@ -1,3 +1,10 @@
+fallback_order:
+  - "ollama"
+  - "groq"
+  - "openai"
+  - "gemini"
+  - "openrouter"
+  - "huggingface"
 providers:
   groq:
     keys: []

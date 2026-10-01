@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
 from backend.skills.cache import get_cached, set_cached
-from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm
+from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm, SkillLLMError
 
 
 class HealthAnalyzerSkill(BaseSkill):
@@ -88,38 +88,54 @@ class HealthAnalyzerSkill(BaseSkill):
                 except Exception:
                     pass
 
-        # Clamp issue list and compute score
+        # Clamp the DISPLAYED issue list, but compute the score from ALL found
+        # issues — previously the score was computed after truncation, so big
+        # repos silently looked healthier than they are.
+        total_high = sum(1 for i in issues if i["severity"] == "HIGH")
+        total_medium = sum(1 for i in issues if i["severity"] == "MEDIUM")
+        total_low = sum(1 for i in issues if i["severity"] == "LOW")
+        # Structural issues dominate the score; style nits (LOW) are
+        # de-emphasised and capped at 30 points total, so a big repo with many
+        # long lines/docstring gaps doesn't falsely floor to 0/100.
+        penalty = total_high * 10 + total_medium * 4 + min(total_low * 0.5, 30)
+        score = int(max(0, min(100, 100 - penalty)))
         issues = issues[:50]
-        high = sum(1 for i in issues if i["severity"] == "HIGH")
-        medium = sum(1 for i in issues if i["severity"] == "MEDIUM")
-        low = sum(1 for i in issues if i["severity"] == "LOW")
-        penalty = high * 10 + medium * 4 + low * 1
-        score = max(0, min(100, 100 - penalty))
 
-        # Quick LLM call for recommendations only (condensed prompt)
+        # Quick LLM call for recommendations only (condensed prompt).
+        # Degrades visibly when the local model is unavailable.
         scan = scan_workspace(workspace_dir)
-        issue_summary = f"{high} high, {medium} medium, {low} low severity issues found."
+        issue_summary = f"{total_high} high, {total_medium} medium, {total_low} low severity issues found."
         schema_hint = '{"recommendations": ["string"]}'
-        recs_result = analyze_with_llm(
-            "health",
-            f"provide 5 concise refactoring recommendations for a repository with score {score}/100 and {issue_summary}",
-            schema_hint,
-            workspace_dir,
-            scan,
-        )
-        recommendations = recs_result.get("recommendations", [
-            "Review bare except blocks and add proper exception handling.",
-            "Add docstrings to all public functions.",
-            "Break up functions longer than 80 lines.",
-            "Resolve all TODO/FIXME markers.",
-            "Enforce a linting tool (pylint, ruff, or eslint)."
-        ])
+        llm_warning = None
+        try:
+            recs_result = analyze_with_llm(
+                "health",
+                f"provide 5 concise refactoring recommendations for a repository with score {score}/100 and {issue_summary}",
+                schema_hint,
+                workspace_dir,
+                scan,
+            )
+            recommendations = [r for r in recs_result.get("recommendations", []) if isinstance(r, str)]
+        except SkillLLMError as e:
+            recommendations = []
+            llm_warning = f"LLM recommendations unavailable [{e.code}]: {e.message}"
+
+        if not recommendations:
+            recommendations = [
+                "Review bare except blocks and add proper exception handling.",
+                "Add docstrings to all public functions.",
+                "Break up functions longer than 80 lines.",
+                "Resolve all TODO/FIXME markers.",
+                "Enforce a linting tool (pylint, ruff, or eslint)."
+            ]
 
         result = {
             "score": score,
             "issues": issues,
             "recommendations": recommendations[:6],
         }
+        if llm_warning:
+            result["warnings"] = [llm_warning]
 
         set_cached("health", workspace_dir, result)
         return result

@@ -23,9 +23,10 @@ class GeminiProvider(BaseProvider):
             response_format = {"type": "json_object"} if json_mode else None
             
             # Map default model name to gemini name if needed
+            # (gemini-1.5-flash is retired; current GA model is 2.0-flash)
             gemini_model = model
             if "gemini" not in model.lower():
-                gemini_model = "gemini-1.5-flash"
+                gemini_model = "gemini-2.0-flash"
                 
             chat_completion = client.chat.completions.create(
                 messages=messages,

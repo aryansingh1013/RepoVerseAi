@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
 from backend.skills.cache import get_cached, set_cached
-from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm
+from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm, SkillLLMError
 
 
 class PerformanceReviewSkill(BaseSkill):
@@ -103,21 +103,29 @@ class PerformanceReviewSkill(BaseSkill):
 
         optimizations = optimizations[:30]
 
-        # LLM for 3 high-level optimization insights
+        # LLM for 3 high-level optimization insights — degrades visibly when
+        # the local model is down; static findings are still returned.
         scan = scan_workspace(workspace_dir)
         issue_count = len(optimizations)
         schema_hint = '{"optimizations": [{"impact": "HIGH|MEDIUM|LOW", "file": "string", "issue": "string", "suggestion": "string"}]}'
-        llm_result = analyze_with_llm(
-            "performance",
-            f"suggest 3 high-level performance improvements for this repository (found {issue_count} static issues)",
-            schema_hint,
-            workspace_dir,
-            scan,
-        )
-        llm_opts = llm_result.get("optimizations", [])
+        llm_warning = None
+        try:
+            llm_result = analyze_with_llm(
+                "performance",
+                f"suggest 3 high-level performance improvements for this repository (found {issue_count} static issues)",
+                schema_hint,
+                workspace_dir,
+                scan,
+            )
+            llm_opts = [o for o in llm_result.get("optimizations", []) if isinstance(o, dict)]
+        except SkillLLMError as e:
+            llm_opts = []
+            llm_warning = f"LLM insights unavailable [{e.code}]: {e.message}"
         optimizations = optimizations + llm_opts[:3]
 
         result = {"optimizations": optimizations}
+        if llm_warning:
+            result["warnings"] = [llm_warning]
         set_cached("performance", workspace_dir, result)
         return result
 

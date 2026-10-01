@@ -1,6 +1,8 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import { useNavigation } from "@/hooks/useNavigation";
+import { useAuth } from "@/hooks/useAuth";
 import { SPACE_OBJECT_LABELS } from "@/types";
 
 /**
@@ -10,7 +12,14 @@ import { SPACE_OBJECT_LABELS } from "@/types";
  */
 export function NavigationHud() {
   const { breadcrumbs, jumpTo, goBack, isTransitioning } = useNavigation();
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const canGoBack = breadcrumbs.length > 1;
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="pointer-events-none absolute top-4 left-4 right-4 flex items-center gap-2 z-10">
@@ -59,6 +68,29 @@ export function NavigationHud() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Spacer to push user chip to the far right */}
+      <div className="flex-1" />
+
+      {/* User chip + sign out */}
+      {user && (
+        <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-white/10 bg-void-900/70 pl-2.5 pr-1.5 py-1 backdrop-blur">
+          <span
+            className="text-[10px] font-mono text-mist-400 truncate max-w-[160px]"
+            title={user.email ?? user.id}
+          >
+            {user.email ?? user.id.slice(0, 8)}
+          </span>
+          <button
+            onClick={handleSignOut}
+            aria-label="Sign out"
+            title="Sign out"
+            className="flex items-center justify-center h-6 w-6 rounded border border-white/10 text-mist-500 hover:text-red-300 hover:border-red-400/40 transition-colors"
+          >
+            <LogOut className="h-3 w-3" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

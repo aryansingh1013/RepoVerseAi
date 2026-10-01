@@ -11,15 +11,17 @@ import {
 } from "react";
 import type {
   SpaceObject,
-  ChatMessage,
   ObjectDetails,
   RepositorySummary,
   RecentFile,
   Bookmark,
 } from "@/types";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
-const WS_BASE = import.meta.env.VITE_WS_URL || "ws://localhost:8000";
+import { apiFetch, wsUrl } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
+
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:7860";
+const WS_BASE = import.meta.env.VITE_WS_URL || "ws://localhost:7860";
 
 
 // ─── Theme Colors (from /api/theme) ──────────────────────────────────────────
@@ -229,16 +231,15 @@ interface NavigationContextValue {
   setMissionControlOpen: (open: boolean) => void;
   showSkillsPanel: boolean;
   setShowSkillsPanel: (open: boolean) => void;
-  messages: ChatMessage[];
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  input: string;
-  setInput: (val: string) => void;
-  isStreaming: boolean;
-  agentSteps: string[];
-  activeStep: string;
-  submitMessage: () => void;
-  selectedMessageId: string | null;
-  setSelectedMessageId: (id: string | null) => void;
+  // Chat state lives in hooks/useChat.tsx (ChatProvider) — see PHASE 12 isolation.
+  /** Persistent selection (highlight) — distinct from focus/navigation. */
+  selectedId: string | null;
+  selectObject: (id: string | null) => void;
+  /** Cut: body ids hidden from the universe view (view-state only). */
+  cutIds: Set<string>;
+  cutObject: (id: string) => void;
+  restoreAll: () => void;
+  isCut: (id: string) => boolean;
 
   // Active File Details
   activeFileContent: string | null;
@@ -264,6 +265,7 @@ const NavigationContext = createContext<NavigationContextValue | null>(null);
 // ─── Provider ────────────────────────────────────────────────────────────────
 
 export function NavigationProvider({ children }: { children: ReactNode }) {
+  const { getAccessToken } = useAuth();
   const [spaceGraph, setSpaceGraph] = useState<SpaceObject[]>([]);
   const [themeColors, setThemeColors] = useState<ThemeColors>(DEFAULT_THEME);
   const [isScanning, setIsScanning] = useState(false);
@@ -278,15 +280,10 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
-  // AI Chat / Mission Control
+  // Mission Control / Skills panel (chat state lives in useChat — PHASE 12
+  // isolation: streaming updates must not re-render the 3D universe)
   const [isMissionControlOpen, setMissionControlOpen] = useState(false);
   const [showSkillsPanel, setShowSkillsPanel] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [agentSteps, setAgentSteps] = useState<string[]>([]);
-  const [activeStep, setActiveStep] = useState("");
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
 
   // File Details
   const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
@@ -304,6 +301,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   const [bookmarks] = useState<Bookmark[]>([]);
 
+  // PHASE 21 — monotonically increasing call id for stale-response guards
+  const refreshScanSeq = useRef(0);
+
   // ── Sync focusId / displayedId with rootId on graph load
   useEffect(() => {
     setFocusId(rootId);
@@ -312,7 +312,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   // ── Fetch theme from backend on startup
   useEffect(() => {
-    fetch(`${API_BASE}/api/theme`)
+    apiFetch(`/api/theme`)
       .then((r) => r.json())
       .then((data) => {
         if (data?.palette) {
@@ -339,7 +339,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const poll = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/workspace/status`);
+        const res = await apiFetch(`/api/workspace/status`);
         if (res.ok) {
           const data = await res.json();
           setWorkspaceStatus(data);
@@ -355,12 +355,17 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   // ── Fetch workspace scan tree and build 3D graph
   const refreshScan = useCallback(async () => {
+    // PHASE 21 — stale-response guard: overlapping calls (manual refresh +
+    // post-index refresh) must not apply out-of-order results.
+    const callId = ++refreshScanSeq.current;
     setIsScanning(true);
     try {
       const [scanRes, summaryRes] = await Promise.all([
-        fetch(`${API_BASE}/api/scan`),
-        fetch(`${API_BASE}/api/summary`),
+        apiFetch(`/api/scan`),
+        apiFetch(`/api/summary`),
       ]);
+
+      if (callId !== refreshScanSeq.current) return; // a newer call superseded this one
 
       if (scanRes.ok) {
         const scanData = await scanRes.json();
@@ -398,7 +403,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.error("Backend scan failed:", e);
     } finally {
-      setIsScanning(false);
+      if (callId === refreshScanSeq.current) setIsScanning(false);
     }
   }, [themeColors, workspaceStatus.repo_name]);
 
@@ -437,8 +442,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
       const fetchFile = async () => {
         try {
-          const res = await fetch(
-            `${API_BASE}/api/file?path=${encodeURIComponent(filePath)}`
+          const res = await apiFetch(
+            `/api/file?path=${encodeURIComponent(filePath)}`
           );
           if (!res.ok) return;
           const data = await res.json();
@@ -532,7 +537,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
                     scale: moonScale,
                     color: sym.type === "class" ? "#c084fc" : "#FBBF24",
                     orbitRadius: mOrbit,
-                    orbitSpeed: 0.3 + 0.12 / (idx + 1),
+                    // PHASE 7.6 — calm moon orbits (further scaled by
+                    // GLOBAL_ORBIT_SCALE in OrbitingBody)
+                    orbitSpeed: 0.12 + 0.05 / (idx + 1),
                     inclination: (Math.random() - 0.5) * 0.5,
                     direction: idx % 2 === 0 ? 1 : -1,
                   };
@@ -623,94 +630,15 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     setDisplayedId(focusId);
   }, [focusId]);
 
-  // ── WebSocket Chat
-  const submitMessage = useCallback(() => {
-    if (!input.trim()) return;
-
-    const userMsg: ChatMessage = {
-      id: `u-${Date.now()}`,
-      role: "user",
-      text: input,
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
-    const query = input;
-    setInput("");
-    setAgentSteps([]);
-    setIsStreaming(true);
-
-    const ws = new WebSocket(`${WS_BASE}/ws/chat`);
-    const assistantId = `a-${Date.now()}`;
-    setSelectedMessageId(assistantId);
-
-    ws.onopen = () => ws.send(query);
-
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-
-      if (msg.type === "step") {
-        setActiveStep(msg.content);
-        setAgentSteps((prev) => [...prev, msg.content]);
-      } else if (msg.type === "response") {
-        setMessages((prev) => {
-          const exists = prev.some((m) => m.id === assistantId);
-          if (!exists) {
-            return [...prev, { id: assistantId, role: "assistant", text: msg.content, steps: [] }];
-          }
-          return prev.map((m) => (m.id === assistantId ? { ...m, text: msg.content } : m));
-        });
-      } else if (msg.type === "citations") {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, citations: msg.content } : m))
-        );
-      } else if (msg.type === "confidence") {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, confidence: msg.content } : m))
-        );
-      } else if (msg.type === "reasoning_trace") {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, trace: msg.content } : m))
-        );
-      } else if (msg.type === "goal_metadata") {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, goal: msg.content } : m))
-        );
-      } else if (msg.type === "tasks_metadata") {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, tasks: msg.content } : m))
-        );
-      } else if (msg.type === "reflection_status") {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, reflection: msg.content } : m))
-        );
-      } else if (msg.type === "done") {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m))
-        );
-        setIsStreaming(false);
-        setActiveStep("");
-        ws.close();
-      } else if (msg.type === "error") {
-        setMessages((prev) => [
-          ...prev,
-          { id: `err-${Date.now()}`, role: "assistant", text: `⚠️ ${msg.content}` },
-        ]);
-        setIsStreaming(false);
-        setActiveStep("");
-        ws.close();
-      }
-    };
-
-    ws.onclose = () => { setIsStreaming(false); setActiveStep(""); };
-    ws.onerror = () => { setIsStreaming(false); setActiveStep(""); };
-  }, [input]);
+  // ── WebSocket Chat — moved to hooks/useChat.tsx (PHASE 12 isolation).
+  // submitMessage previously lived here and re-rendered the universe per
+  // streaming frame; it now lives in the dedicated ChatProvider.
 
   // ── Workspace Actions
   const triggerSelectWorkspace = useCallback(async (path: string) => {
     try {
-      await fetch(`${API_BASE}/api/workspace/select`, {
+      await apiFetch(`/api/workspace/select`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       });
     } catch (e) {
@@ -720,9 +648,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   const triggerCloneWorkspace = useCallback(async (url: string) => {
     try {
-      await fetch(`${API_BASE}/api/clone`, {
+      await apiFetch(`/api/clone`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_url: url }),
       });
     } catch (e) {
@@ -732,12 +659,32 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   const triggerIndexWorkspace = useCallback(async () => {
     try {
-      await fetch(`${API_BASE}/api/index`, { method: "POST" });
+      await apiFetch(`/api/index`, { method: "POST" });
       setTimeout(refreshScan, 2000);
     } catch (e) {
       console.error("Index error:", e);
     }
   }, [refreshScan]);
+
+  // ── Selection (persistent highlight — distinct from focus/navigation) ────
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectObject = useCallback((id: string | null) => {
+    setSelectedId((prev) => (prev === id ? null : id));
+  }, []);
+
+  // ── Cut (PHASE 15/16) — hides a body from the universe (view-state only,
+  // never mutates the repository or the spaceGraph itself).
+  const [cutIds, setCutIds] = useState<Set<string>>(new Set());
+  const cutObject = useCallback((id: string) => {
+    setCutIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    setSelectedId((prev) => (prev === id ? null : prev));
+  }, []);
+  const restoreAll = useCallback(() => setCutIds(new Set()), []);
+  const isCut = useCallback((id: string) => cutIds.has(id), [cutIds]);
 
   const value = useMemo(
     () => ({
@@ -759,16 +706,12 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       setMissionControlOpen,
       showSkillsPanel,
       setShowSkillsPanel,
-      messages,
-      setMessages,
-      input,
-      setInput,
-      isStreaming,
-      agentSteps,
-      activeStep,
-      submitMessage,
-      selectedMessageId,
-      setSelectedMessageId,
+      selectedId,
+      selectObject,
+      cutIds,
+      cutObject,
+      restoreAll,
+      isCut,
       activeFileContent,
       activeFileDetails,
       workspaceStatus,
@@ -782,8 +725,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     [
       spaceGraph, focusId, breadcrumbs, displayedId, hoveredId, isTransitioning,
       navigateTo, goBack, jumpTo, reportArrived, refreshScan, isScanning, themeColors,
-      isMissionControlOpen, showSkillsPanel, messages, input, isStreaming, agentSteps, activeStep,
-      submitMessage, selectedMessageId, activeFileContent, activeFileDetails,
+      isMissionControlOpen, showSkillsPanel, selectedId, selectObject, cutIds, cutObject,
+      restoreAll, isCut, activeFileContent, activeFileDetails,
       workspaceStatus, triggerSelectWorkspace, triggerCloneWorkspace, triggerIndexWorkspace,
       repositories, recentFiles, bookmarks,
     ]

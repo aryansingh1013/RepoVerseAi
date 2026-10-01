@@ -7,7 +7,13 @@ from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
 from backend.skills.cache import get_cached, set_cached
-from backend.skills.utils import analyze_with_llm, scan_workspace, read_readme, build_workspace_skeleton
+from backend.skills.utils import (
+    analyze_with_llm,
+    scan_workspace,
+    read_readme,
+    build_workspace_skeleton,
+    SkillLLMError,
+)
 
 
 class ReadmeGeneratorSkill(BaseSkill):
@@ -68,7 +74,38 @@ class ReadmeGeneratorSkill(BaseSkill):
             json_mode=False,
         )
 
-        markdown = response.response or f"# {scan['repo_name']}\n\nREADME generation failed. Please check your LLM configuration."
+        # ── Surface real LLM failures instead of turning them into a README ──
+        if getattr(response, "status", "") != "success":
+            err = (getattr(response, "error_message", "") or "unknown error").lower()
+            if "connection" in err or "refused" in err or "timeout" in err or "timed out" in err:
+                raise SkillLLMError(
+                    "OLLAMA_UNAVAILABLE",
+                    "Ollama is not reachable. Start it with `ollama serve` and confirm the model is pulled.",
+                )
+            elif "404" in err or "not found" in err:
+                from backend.core.config import settings as _s
+                raise SkillLLMError(
+                    "MODEL_MISSING",
+                    f"Ollama is running, but model '{_s.OLLAMA_DEFAULT_MODEL}' is unavailable. Run: ollama pull {_s.OLLAMA_DEFAULT_MODEL}",
+                )
+            else:
+                raise SkillLLMError(
+                    "LLM_GENERATION_FAILED",
+                    f"README generation failed. All LLM providers failed. Last error: {response.error_message}",
+                )
+
+        markdown = (getattr(response, "response", "") or "").strip()
+        # Strip a stray router-error sentence that slipped into an otherwise
+        # successful response, plus any leftover thinking blocks, then reject
+        # empty output instead of caching a fake README.
+        markdown = markdown.replace("Error: All LLM providers in the fallback chain were exhausted.", "")
+        import re as _re
+        markdown = _re.sub(r"<think>.*?</think>", "", markdown, flags=_re.DOTALL).strip()
+        if not markdown:
+            raise SkillLLMError(
+                "EMPTY_LLM_RESULT",
+                "The LLM returned an empty response for README generation. Try re-running the skill.",
+            )
 
         result = {"markdown": markdown}
         set_cached("readme", workspace_dir, result)

@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, Github, Orbit, ChevronRight, Loader2, AlertCircle, Sparkles, Folder, ArrowUp, Home, X } from "lucide-react";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
+
+const API = import.meta.env.VITE_API_URL || "http://localhost:7860";
 
 // ─── Starfield background canvas ─────────────────────────────────────────────
 function Starfield() {
@@ -96,7 +98,7 @@ export function LandingPage() {
 
   // Check backend is alive
   useEffect(() => {
-    fetch(`${API}/api/workspace/status`)
+    apiFetch(`/api/workspace/status`)
       .then((r) => r.ok ? setBackendOnline(true) : setBackendOnline(false))
       .catch(() => setBackendOnline(false));
   }, []);
@@ -111,10 +113,10 @@ export function LandingPage() {
   const fetchDirectories = async (path?: string) => {
     setBrowserLoading(true);
     try {
-      const url = path 
-        ? `${API}/api/workspace/list_directories?path=${encodeURIComponent(path)}`
-        : `${API}/api/workspace/list_directories`;
-      const res = await fetch(url);
+      const url = path
+        ? `/api/workspace/list_directories?path=${encodeURIComponent(path)}`
+        : `/api/workspace/list_directories`;
+      const res = await apiFetch(url);
       const data = await res.json();
       if (data.status === "success") {
         setBrowserCurrentPath(data.current_path);
@@ -144,9 +146,8 @@ export function LandingPage() {
     setError("");
     setIsLoading(true);
     try {
-      const res = await fetch(`${API}/api/workspace/select`, {
+      const res = await apiFetch(`/api/workspace/select`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }),
       });
       if (!res.ok) {
@@ -172,9 +173,8 @@ export function LandingPage() {
     setError("");
     setIsLoading(true);
     try {
-      const res = await fetch(`${API}/api/clone`, {
+      const res = await apiFetch(`/api/clone`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_url: url }),
       });
       if (!res.ok) {
@@ -240,9 +240,8 @@ export function LandingPage() {
           <span className={`h-1.5 w-1.5 rounded-full ${
             backendOnline === null ? "bg-slate-500" :
             backendOnline ? "bg-emerald-400 animate-pulse" : "bg-red-400"
-          }`} />
-          {backendOnline === null ? "Connecting to AI engine…" :
-           backendOnline ? "AI Engine Online · Port 8000" : "Backend offline — start the server first"}
+          }`} />           {backendOnline === null ? "Connecting to AI engine…" :
+            backendOnline ? "AI Engine Online" : "Backend offline — start the server first"}
         </motion.div>
 
         {/* Main Card */}

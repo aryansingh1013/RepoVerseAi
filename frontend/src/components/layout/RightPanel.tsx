@@ -1,10 +1,10 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Tag, Code2, Package, BarChart3, GitBranch, Orbit, ArrowLeft } from "lucide-react";
+import { Tag, Code2, Package, BarChart3, GitBranch, Orbit, ArrowLeft, Scissors, Undo2 } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
 import { SPACE_OBJECT_LABELS } from "@/types";
 
 export function RightPanel() {
-  const { displayedId, isTransitioning, spaceGraph, activeFileDetails, navigateTo, goBack } = useNavigation();
+  const { displayedId, isTransitioning, spaceGraph, activeFileDetails, navigateTo, goBack, cutObject, restoreAll, cutIds } = useNavigation();
   const object = spaceGraph.find((o) => o.id === displayedId);
   
   if (!object) {
@@ -51,12 +51,25 @@ export function RightPanel() {
                 {SPACE_OBJECT_LABELS[details.type]}
               </span>
               {displayedId !== "galaxy-root" && (
-                <button
-                  onClick={goBack}
-                  className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-mist-500 hover:text-mist-300 transition-colors font-mono"
-                >
-                  <ArrowLeft className="h-3 w-3" /> Back
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* PHASE 15/26 — Cut: hides the selected body from the
+                      universe view (view-state only, repo untouched). Fully
+                      keyboard accessible native button. */}
+                  <button
+                    onClick={() => cutObject(displayedId)}
+                    aria-label={`Cut ${details.name} from the universe view`}
+                    title="Cut — hide this object from the universe view"
+                    className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-mist-500 hover:text-ember-400 transition-colors font-mono"
+                  >
+                    <Scissors className="h-3 w-3" /> Cut
+                  </button>
+                  <button
+                    onClick={goBack}
+                    className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-mist-500 hover:text-mist-300 transition-colors font-mono"
+                  >
+                    <ArrowLeft className="h-3 w-3" /> Back
+                  </button>
+                </div>
               )}
             </div>
             <h2 className="font-display text-base font-semibold text-mist-100 leading-snug truncate">
@@ -177,6 +190,17 @@ export function RightPanel() {
                 })}
               </div>
             </div>
+          )}
+
+          {/* PHASE 15 — restore affordance when bodies are cut */}
+          {cutIds.size > 0 && (
+            <button
+              onClick={restoreAll}
+              aria-label="Restore all cut objects"
+              className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-mist-500 hover:text-signal-400 border border-white/10 rounded-md px-2 py-1.5 hover:border-signal-400/40 transition-colors self-start"
+            >
+              <Undo2 className="h-3 w-3" /> Restore {cutIds.size} cut
+            </button>
           )}
 
         </motion.div>

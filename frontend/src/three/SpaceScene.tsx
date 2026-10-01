@@ -1,4 +1,5 @@
 import { Suspense, useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -7,27 +8,57 @@ import { StarField } from "./StarField";
 import { FocusBody } from "./FocusBody";
 import { OrbitingBody } from "./OrbitingBody";
 import { CameraRig } from "./CameraRig";
+import { makeNebulaTexture } from "./textures";
+import { CAMERA, getQualityBudget } from "./motionConfig";
 import { useNavigation } from "@/hooks/useNavigation";
 
-/** A faint volumetric nebula billboard — cheap additive-blended plane. */
-function NebulaVolume({ position, color, size, opacity }: {
+// PHASE 9 — device-adaptive quality budget, computed once per module load.
+const QUALITY = getQualityBudget();
+
+/**
+ * Volumetric nebula billboard — turbulent noise texture on a slow-rotating
+ * pair of crossed sprites so the cloud reads from every angle.
+ */
+function NebulaVolume({ position, color, size, opacity, seed = 1 }: {
   position: [number, number, number];
   color: string;
   size: number;
   opacity: number;
+  seed?: number;
 }) {
+  const texA = useMemo(() => makeNebulaTexture(color, seed * 100 + 7, 256), [color, seed]);
+  const texB = useMemo(() => makeNebulaTexture(color, seed * 100 + 41, 256), [color, seed]);
+  const refA = useRef<THREE.Sprite>(null);
+  const refB = useRef<THREE.Sprite>(null);
+
+  useFrame((_, delta) => {
+    if (refA.current) refA.current.material.rotation += delta * 0.008;
+    if (refB.current) refB.current.material.rotation -= delta * 0.011;
+  });
+
   return (
-    <mesh position={position} rotation={[0.3, 0.8, 0.2]}>
-      <planeGeometry args={[size, size]} />
-      <meshBasicMaterial
-        color={color}
-        transparent
-        opacity={opacity}
-        side={THREE.DoubleSide}
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </mesh>
+    <group position={position}>
+      <sprite ref={refA} scale={[size, size, 1]}>
+        <spriteMaterial
+          map={texA}
+          color={color}
+          transparent
+          opacity={opacity}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
+      <sprite ref={refB} scale={[size * 0.8, size * 0.8, 1]}>
+        <spriteMaterial
+          map={texB}
+          color={color}
+          transparent
+          opacity={opacity * 0.8}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
+    </group>
   );
 }
 
@@ -100,8 +131,8 @@ export function SpaceScene() {
   return (
     <Canvas
       camera={{ position: [8, 5, 10], fov: 50 }}
-      dpr={[1, 1.5]}
-      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
+      dpr={[1, QUALITY.dprMax]}
+      gl={{ antialias: QUALITY.dprMax > 1, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }}
     >
       <color attach="background" args={["#04060c"]} />
       {/* Soft depth fog — tinted toward focused body's hue */}
@@ -119,9 +150,9 @@ export function SpaceScene() {
         <StarField />
 
         {/* ── Nebula volumes in background ── */}
-        <NebulaVolume position={[ 18, 4, -12]} color="#2233ff" size={22} opacity={0.025} />
-        <NebulaVolume position={[-16, -3,  18]} color="#ff2255" size={18} opacity={0.020} />
-        <NebulaVolume position={[  8, 12, -20]} color="#00ccaa" size={16} opacity={0.018} />
+        <NebulaVolume position={[ 18, 4, -12]} color="#3346ff" size={26} opacity={0.05} seed={1} />
+        <NebulaVolume position={[-16, -3,  18]} color="#ff3366" size={22} opacity={0.04} seed={2} />
+        <NebulaVolume position={[  8, 12, -20]} color="#00ccaa" size={20} opacity={0.035} seed={3} />
 
         {/* Local dust particles near focus */}
         <LocalDust />
@@ -159,10 +190,10 @@ export function SpaceScene() {
         enableRotate
         minDistance={1.2}
         maxDistance={65}
-        dampingFactor={0.08}
+        dampingFactor={CAMERA.dampingFactor}
         enableDamping
-        rotateSpeed={0.6}
-        zoomSpeed={0.8}
+        rotateSpeed={CAMERA.rotateSpeed}
+        zoomSpeed={CAMERA.zoomSpeed}
       />
       <CameraRig controlsRef={controlsRef} viewDistance={viewDistance} />
     </Canvas>

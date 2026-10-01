@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
 from backend.skills.cache import get_cached, set_cached
-from backend.skills.utils import analyze_with_llm, scan_workspace
+from backend.skills.utils import analyze_with_llm, scan_workspace, SkillLLMError
 
 
 class LearningModeSkill(BaseSkill):
@@ -44,23 +44,34 @@ class LearningModeSkill(BaseSkill):
             '"quiz": [{"question": "string", "options": ["string"], "answer": "string"}]}'
         )
 
-        result = analyze_with_llm(
-            "learning",
-            (
-                "create 3 beginner-friendly onboarding lessons for a new developer joining this project. "
-                "Each lesson must have a `title` and `content` (3-4 sentences). "
-                "Also create 3 multiple-choice quiz questions (4 options each) with a correct `answer`."
-            ),
-            schema_hint,
-            workspace_dir,
-            scan,
-        )
+        try:
+            result = analyze_with_llm(
+                "learning",
+                (
+                    "create 3 beginner-friendly onboarding lessons for a new developer joining this project. "
+                    "Each lesson must have a `title` and `content` (3-4 sentences). "
+                    "Also create 3 multiple-choice quiz questions (4 options each) with a correct `answer`."
+                ),
+                schema_hint,
+                workspace_dir,
+                scan,
+            )
+        except SkillLLMError:
+            # Never cache LLM failures — surface structured error instead (§12/§22)
+            raise
 
-        if "error" in result or not result.get("lessons"):
-            result = {
-                "lessons": [{"title": "Getting Started", "content": f"This repository '{scan['repo_name']}' contains {scan['total_files']} source files. Explore the directory structure to understand the codebase layout."}],
-                "quiz": [{"question": "What is the primary language of this repo?", "options": list(scan["languages"].keys())[:4] or ["Unknown"], "answer": list(scan["languages"].keys())[0] if scan["languages"] else "Unknown"}]
-            }
+        # Schema validation — normalize shapes; do NOT fabricate placeholder lessons
+        result.setdefault("lessons", [])
+        result.setdefault("quiz", [])
+        result["lessons"] = [l for l in result["lessons"] if isinstance(l, dict) and l.get("title")]
+        result["quiz"] = [q for q in result["quiz"] if isinstance(q, dict) and q.get("question")]
+
+        if not result["lessons"]:
+            # LLM succeeded but produced nothing usable — report honestly, don't cache
+            raise SkillLLMError(
+                "EMPTY_LLM_RESULT",
+                "Learning Mode received a valid LLM response but no usable lessons. Try re-running the skill.",
+            )
 
         set_cached("learning", workspace_dir, result)
         return result

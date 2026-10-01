@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { 
   Orbit, History, Cpu, BookOpen, ShieldAlert, Activity, 
-  FileText, Sparkles, Copy, Check, Download, X, Loader2
+  FileText, Sparkles, Copy, Check, Download, X, Loader2, RefreshCw
 } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
+
+const API = import.meta.env.VITE_API_URL || "http://localhost:7860";
 
 // Helper to render Markdown report dynamically
 function parseMarkdown(md: string) {
@@ -132,44 +134,130 @@ const skillsList = [
   { slug: "performance", name: "Performance" }
 ];
 
+interface SkillErrorShape {
+  code?: string;
+  message?: string;
+}
+
+function renderErrorReport(skill: string, error: SkillErrorShape | string | undefined): string {
+  const code = typeof error === "object" && error?.code ? error.code : "UNKNOWN";
+  const message =
+    typeof error === "object" && error?.message
+      ? error.message
+      : typeof error === "string"
+      ? error
+      : "Unknown error.";
+  return [
+    `# ⚠️ Skill Run Failed: ${skill}`,
+    "",
+    `**Error code:** \`${code}\``,
+    "",
+    `**Details:** ${message}`,
+    "",
+    "### Suggestions",
+    code === "OLLAMA_UNAVAILABLE"
+      ? "- Start the local engine: `ollama serve`\n- Confirm the model: `ollama list`"
+      : code === "MODEL_MISSING"
+      ? `- Pull the model: \`ollama pull qwen3:8b\``
+      : code === "NO_UNIVERSE_SELECTED" || code === "WORKSPACE_NOT_FOUND"
+      ? "- Select or clone a repository from the Landing Page first."
+      : code === "SKILL_NOT_FOUND"
+      ? "- This skill is not registered on the backend — check the skills registry."
+      : "- Check the backend logs for details, then retry.",
+    code !== "NO_UNIVERSE_SELECTED"
+      ? "- If the report looks stale after fixing the issue, use **Clear Cache & Retry** below."
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function SkillsOverlay() {
   const { setShowSkillsPanel } = useNavigation();
   const [selectedSkillSlug, setSelectedSkillSlug] = useState<string>("overview");
   const [isLoading, setIsLoading] = useState(false);
   const [skillReportMarkdown, setSkillReportMarkdown] = useState<string>("");
+  const [lastError, setLastError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Real backend capability check — slugs registered on the backend get a
+  // live indicator; nothing is hard-coded as "working".
+  const [registeredSlugs, setRegisteredSlugs] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch(`/api/skills`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((skills: Array<{ slug: string }>) => {
+        if (!cancelled) setRegisteredSlugs(new Set(skills.map((s) => s.slug)));
+      })
+      .catch(() => {
+        /* status bar already reports backend connectivity */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const runSkill = async () => {
     setIsLoading(true);
     setSkillReportMarkdown("");
+    setLastError(null);
     try {
-      const execRes = await fetch(`${API}/api/skills/execute/${selectedSkillSlug}`, {
+      const execRes = await apiFetch(`/api/skills/execute/${selectedSkillSlug}`, {
         method: "POST"
       });
-      const execData = await execRes.json();
-      
-      if (execData.error) {
-        setSkillReportMarkdown(`# Skill Run Failed\n\nError: ${execData.error}`);
+      const execData = await execRes.json().catch(() => null);
+
+      if (!execRes.ok && !execData) {
+        setSkillReportMarkdown(renderErrorReport(selectedSkillSlug, {
+          code: "BACKEND_UNREACHABLE",
+          message: `HTTP ${execRes.status} from backend.`,
+        }));
         return;
       }
-      
-      const exportRes = await fetch(`${API}/api/skills/export/${selectedSkillSlug}`, {
+
+      if (execData?.success === false || execData?.error) {
+        setSkillReportMarkdown(renderErrorReport(selectedSkillSlug, execData.error));
+        setLastError(selectedSkillSlug);
+        return;
+      }
+
+      const exportRes = await apiFetch(`/api/skills/export/${selectedSkillSlug}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ result: execData })
       });
+      if (!exportRes.ok) {
+        setSkillReportMarkdown(renderErrorReport(selectedSkillSlug, {
+          code: "EXPORT_FAILED",
+          message: `Report export failed (HTTP ${exportRes.status}).`
+        }));
+        return;
+      }
       const exportData = await exportRes.json();
       setSkillReportMarkdown(exportData.markdown || "");
     } catch (err: any) {
-      setSkillReportMarkdown(`# Skill Run Error\n\nFailed to connect to backend service:\n${err.message}`);
+      setSkillReportMarkdown(renderErrorReport(selectedSkillSlug, {
+        code: "BACKEND_UNREACHABLE",
+        message: err?.message || "Failed to connect to backend service."
+      }));
     } finally {
       setIsLoading(false);
     }
   };
 
+  const clearCacheAndRetry = async () => {
+    try {
+      await apiFetch(`/api/skills/clear-cache/${selectedSkillSlug}`, { method: "POST" });
+    } catch {
+      /* non-fatal — retry regardless */
+    }
+    await runSkill();
+  };
+
   // Clear report when switching tabs
   useEffect(() => {
     setSkillReportMarkdown("");
+    setLastError(null);
   }, [selectedSkillSlug]);
 
   const handleCopy = () => {
@@ -215,6 +303,11 @@ export function SkillsOverlay() {
             <button
               key={skill.slug}
               onClick={() => setSelectedSkillSlug(skill.slug)}
+              title={
+                registeredSlugs.has(skill.slug)
+                  ? `${skill.name} — registered on backend`
+                  : `${skill.name} — NOT registered on backend`
+              }
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium transition-all cursor-pointer whitespace-nowrap border ${
                 isSelected 
                   ? "bg-[#7C3AED]/20 border-[#7C3AED]/40 text-[#A78BFA] shadow-md shadow-[#7C3AED]/5" 
@@ -223,6 +316,11 @@ export function SkillsOverlay() {
             >
               {getSkillIcon(skill.slug)}
               {skill.name}
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  registeredSlugs.has(skill.slug) ? "bg-emerald-400" : "bg-red-400"
+                }`}
+              />
             </button>
           );
         })}
@@ -242,6 +340,14 @@ export function SkillsOverlay() {
           <div className="space-y-4">
             {/* Quick Actions */}
             <div className="flex justify-end gap-2 border-b border-white/5 pb-2.5">
+              {lastError && (
+                <button
+                  onClick={clearCacheAndRetry}
+                  className="flex items-center gap-1 rounded-lg border border-ember-400/30 bg-ember-400/10 px-2.5 py-1.2 text-[10px] text-ember-300 hover:bg-ember-400/20 transition-all cursor-pointer"
+                >
+                  <RefreshCw className="h-3 w-3" /> Clear Cache & Retry
+                </button>
+              )}
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.2 text-[10px] text-slate-300 hover:bg-white/10 hover:text-white transition-all cursor-pointer"

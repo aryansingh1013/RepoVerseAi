@@ -2,14 +2,18 @@ import os
 import yaml
 from typing import Dict, Any, Tuple
 
-# Default fallback task configuration
+# Default fallback task configuration — chat on Groq (fast cloud, qwen fallback),
+# all other tasks local-first (Ollama qwen3:8b)
 DEFAULT_TASK_ROUTING = {
-    "repository_summary": ("huggingface", "Qwen/Qwen2.5-Coder-7B-Instruct"),
-    "chat": ("groq", "llama-3.3-70b-versatile"),
-    "code_review": ("huggingface", "Qwen/Qwen2.5-Coder-7B-Instruct"),
-    "architecture_summary": ("huggingface", "Qwen/Qwen2.5-Coder-7B-Instruct"),
-    "tool_selection": ("groq", "llama-3.3-70b-versatile"),
-    "offline": ("ollama", "qwen2.5")
+    "repository_summary": ("ollama", "qwen3:8b"),
+    "chat": ("groq", "openai/gpt-oss-20b"),
+    "code_review": ("ollama", "qwen3:8b"),
+    "architecture_summary": ("ollama", "qwen3:8b"),
+    "tool_selection": ("ollama", "qwen3:8b"),
+    "offline": ("ollama", "qwen3:8b"),
+    # Skills (README generator, utils.generate) use this task; pinned so it
+    # never inherits chat's routing
+    "analysis": ("ollama", "qwen3:8b")
 }
 
 class TaskRouter:
@@ -40,7 +44,7 @@ class TaskRouter:
 
     def resolve_task(self, task: str) -> Tuple[str, str]:
         """Resolves task slug to (provider, model)."""
-        return self.rules.get(task, self.rules.get("chat", ("groq", "llama-3.3-70b-versatile")))
+        return self.rules.get(task, self.rules.get("chat", ("ollama", "qwen3:8b")))
 
 # Global instance pointing to default workspace location
 config_file = os.path.abspath(os.path.join(os.path.dirname(__file__), "config", "model_config.yaml"))

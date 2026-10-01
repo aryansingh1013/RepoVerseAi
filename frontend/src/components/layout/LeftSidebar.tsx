@@ -1,6 +1,7 @@
 import { FolderGit2, Clock, Bookmark as BookmarkIcon, Layers, ShieldAlert } from "lucide-react";
 import { motion } from "framer-motion";
 import { useNavigation } from "@/hooks/useNavigation";
+import { useChat } from "@/hooks/useChat";
 import { clsx } from "@/utils/clsx";
 
 export function LeftSidebar() {
@@ -11,11 +12,10 @@ export function LeftSidebar() {
     recentFiles, 
     bookmarks,
     isMissionControlOpen,
-    messages,
-    selectedMessageId,
     activeFileContent,
     activeFileDetails
   } = useNavigation();
+  const { messages, selectedMessageId } = useChat();
 
   // PRIORITIZED VIEW: Full Code Viewer when file content is loaded
   if (activeFileContent !== null && activeFileDetails) {

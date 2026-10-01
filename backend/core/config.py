@@ -35,6 +35,15 @@ class Settings(BaseSettings):
         self.WORKSPACE_DIR = active_ws or default_root
         self.DB_DIR = os.path.join(default_root, "db")
     
+    # Supabase (Phase 1 — cloud persistence & auth)
+    # Accepts BOTH Supabase key namings: legacy (SUPABASE_ANON_KEY /
+    # SUPABASE_SERVICE_KEY) and current dashboard naming
+    # (SUPABASE_PUBLISHABLE_KEY / SUPABASE_SECRET_KEY).
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "") or os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+    SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("SUPABASE_SECRET_KEY", "")
+    SUPABASE_JWKS_URL: str = os.getenv("SUPABASE_JWKS_URL", "")
+
     # API Keys (Fallback to developer credentials if environment not set)
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY", "")
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY", "")
@@ -46,9 +55,15 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
     EMBEDDING_MODEL_FALLBACK: str = "sentence-transformers/all-MiniLM-L6-v2"
     
-    PRIMARY_LLM: str = "llama-3.3-70b-versatile"
-    SECONDARY_LLM: str = "Qwen/Qwen2.5-Coder-32B-Instruct"
-    FALLBACK_LLM: str = "qwen2.5"  # Local Ollama model
+    # Local-first LLM stack (Ollama); cloud APIs are fallback only
+    PRIMARY_LLM: str = "qwen3:8b"
+    SECONDARY_LLM: str = "openai/gpt-oss-20b"
+    FALLBACK_LLM: str = "qwen3:8b"  # Local Ollama model
+    OLLAMA_ENDPOINT: str = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/v1")
+    OLLAMA_DEFAULT_MODEL: str = os.getenv("OLLAMA_DEFAULT_MODEL", "qwen3:8b")
+    # Local models on CPU can take minutes for structured JSON generation.
+    # Generous timeout prevents premature failover to cloud providers.
+    OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "600"))
     
     # Host configuration — 0.0.0.0 is required for Railway/cloud deployments
     HOST: str = os.getenv("HOST", "0.0.0.0")

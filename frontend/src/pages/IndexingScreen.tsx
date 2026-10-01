@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Orbit, CheckCircle2, AlertCircle } from "lucide-react";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
+
+const API = import.meta.env.VITE_API_URL || "http://localhost:7860";
 
 type StatusState = "cloning" | "indexing" | "ready" | "error";
 
@@ -45,7 +47,7 @@ export function IndexingScreen() {
 
     const poll = async () => {
       try {
-        const res = await fetch(`${API}/api/workspace/status`);
+        const res = await apiFetch(`/api/workspace/status`);
         if (!res.ok) return;
         const data = await res.json();
 

@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
 from backend.skills.cache import get_cached, set_cached
-from backend.skills.utils import scan_workspace, read_readme
+from backend.skills.utils import scan_workspace, read_readme, safe_walk, SKIP_DIRS
 
 
 class RepositoryOverviewSkill(BaseSkill):
@@ -70,24 +70,24 @@ class RepositoryOverviewSkill(BaseSkill):
         if "next.config.js" in cfg:
             tech_stack += ["Next.js"]
 
-        # Derive main top-level folders as component overview
+        # Derive main top-level folders as component overview (exclude SKIP_DIRS
+        # so the repo's own db/cloned_repos — other universes — never appear)
         top_dirs = []
         try:
             for entry in sorted(os.listdir(workspace_dir)):
-                if entry.startswith(".") or entry in {"node_modules", "__pycache__", "dist", "build"}:
+                if entry.startswith(".") or entry in SKIP_DIRS:
                     continue
                 full = os.path.join(workspace_dir, entry)
                 if os.path.isdir(full):
-                    inner_count = sum(
-                        1 for _, _, fnames in os.walk(full) for f in fnames
-                        if not f.startswith(".")
-                    )
+                    inner_count = 0
+                    for root_rel, files in safe_walk(full):
+                        inner_count += len(files)
                     top_dirs.append({
                         "path": f"{entry}/",
                         "description": f"Contains ~{inner_count} files"
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SKILL] overview: folder scan partially failed: {e}")
 
         # Use README first paragraph as the summary if available
         readme_first = ""

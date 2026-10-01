@@ -17,7 +17,7 @@ from backend.mcp.registry import MCPServerRegistry
 from backend.mcp.loader import DynamicToolLoader
 from backend.agent.registry import AgentToolRegistry
 
-app = FastAPI(title="RepoVerse AI Backend", version="1.0.0")
+app = FastAPI(title="RepoVerse AI Backend", version="1.1.0")
 
 # Enable CORS for the frontend (Vite defaults to port 5173)
 app.add_middleware(
@@ -27,6 +27,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Phase 1: Supabase-backed REST routes (repositories, jobs, conversations)
+try:
+    from backend.api import router as cloud_router
+    app.include_router(cloud_router)
+    print("Cloud routes registered: /api/repositories, /api/jobs, /api/auth")
+except Exception as _e:
+    print(f"WARNING: Cloud routes not registered: {_e}")
 
 # Global instances — wrapped in try/except so startup errors don't prevent port binding
 try:
@@ -533,6 +541,25 @@ def update_settings(payload: SettingsUpdate):
         "active_model": agent_nodes.model_name
     }
 
+@app.get("/api/llm/status")
+def get_llm_status():
+    """Real capability status for the local-first LLM stack.
+    Used by the frontend status bar — never hard-code status client-side."""
+    from backend.skills.utils import check_llm_status
+    status = check_llm_status()
+    return {
+        "llm": status,
+        "workspace": {
+            "path": settings.WORKSPACE_DIR,
+            "exists": os.path.isdir(settings.WORKSPACE_DIR),
+            "repo_name": os.path.basename(settings.WORKSPACE_DIR),
+        },
+        "index": {
+            "chunks": len(indexed_data.get("chunks", [])),
+            "indexed": bool(indexed_data.get("summary")),
+        },
+    }
+
 @app.get("/api/llm/telemetry")
 def get_llm_telemetry():
     """Returns active telemetry logs from the model router."""
@@ -599,7 +626,11 @@ def get_mcp_dashboard_status():
     return mcp_manager.get_status_telemetry()
 
 # Skills APIs (Phase 5)
-import backend.skills
+try:
+    import backend.skills
+except Exception as _e:
+    # One broken skill module must not prevent the whole backend from starting.
+    print(f"WARNING: Skill modules failed to import: {_e}")
 
 @app.get("/api/skills")
 def get_skills_list():
@@ -609,11 +640,71 @@ def get_skills_list():
 @app.post("/api/skills/execute/{slug}")
 def execute_skill(slug: str):
     from backend.skills.skill_manager import skill_manager
+    from backend.skills.utils import validate_workspace, SkillLLMError
+
+    # ── Universe context contract: validate BEFORE executing anything ──
+    ok, err_code = validate_workspace(settings.WORKSPACE_DIR)
+    if not ok:
+        return {
+            "success": False,
+            "skill": slug,
+            "error": {
+                "code": err_code,
+                "message": (
+                    "No repository/universe is currently selected."
+                    if err_code == "NO_UNIVERSE_SELECTED"
+                    else f"The selected universe path no longer exists: {settings.WORKSPACE_DIR}"
+                ),
+            },
+        }
+
+    # Known slug check → clear 404-style structured error
+    from backend.skills.registry import skill_registry
+    if skill_registry.get_skill(slug) is None:
+        return {
+            "success": False,
+            "skill": slug,
+            "error": {"code": "SKILL_NOT_FOUND", "message": f"Skill '{slug}' is not registered."},
+        }
+
     try:
         res = skill_manager.run_skill(slug, f"Analyze {slug}", agent_graph, settings.WORKSPACE_DIR)
+        # Skills raise SkillLLMError on LLM failure; surface structured error
+        res["success"] = res.get("success", True)
         return res
+    except SkillLLMError as e:
+        return {
+            "success": False,
+            "skill": slug,
+            "error": {"code": e.code, "message": e.message},
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Unexpected failures must still be visible, never silent (§11)
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "skill": slug,
+            "error": {"code": "SKILL_EXECUTION_FAILED", "message": str(e)},
+        }
+
+@app.post("/api/skills/clear-cache/{slug}")
+def clear_skill_cache(slug: str):
+    """Clears a skill's cached result for the active universe (or all skills with slug='all').
+    Needed because LLM failures must never be served from cache after recovery."""
+    from backend.skills.cache import clear_cache
+    from backend.skills.utils import validate_workspace
+
+    ok, err_code = validate_workspace(settings.WORKSPACE_DIR)
+    if not ok:
+        return {"success": False, "error": {"code": err_code, "message": "No repository/universe is currently selected."}}
+
+    from backend.skills.registry import skill_registry
+    if slug != "all" and skill_registry.get_skill(slug) is None:
+        return {"success": False, "error": {"code": "SKILL_NOT_FOUND", "message": f"Skill '{slug}' is not registered."}}
+
+    clear_cache(settings.WORKSPACE_DIR, None if slug == "all" else slug)
+    return {"success": True, "message": f"Cache cleared for '{slug}'."}
 
 class ExportPayload(BaseModel):
     result: Dict[str, Any]

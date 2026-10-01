@@ -1,9 +1,19 @@
-import { useRef, useState, useMemo, type ReactNode } from "react";
+import { useRef, useState, useMemo, useEffect, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { Html } from "@react-three/drei";
 import { useNavigation } from "@/hooks/useNavigation";
 import { positionsRegistry } from "./positionsRegistry";
+import { ORBIT_SPEED, GLOBAL_ORBIT_SCALE, SELF_ROTATION, BODY_SCALE } from "./motionConfig";
+import {
+  makePlanetTexture,
+  makePlanetBumpMap,
+  makeMoonTexture,
+  makeMoonBumpMap,
+  makeStarTexture,
+  makeGlowTexture,
+  makeRingTexture,
+} from "./textures";
 import type { SpaceObject } from "@/types";
 
 interface OrbitingBodyProps {
@@ -11,112 +21,59 @@ interface OrbitingBodyProps {
   children?: ReactNode;
 }
 
-// ─── Procedural texture generators ────────────────────────────────────────
+// ─── Procedural texture hooks (shared engine, see textures.ts) ────────────
 
-/**
- * Creates a canvas-based procedural texture: layered Perlin-like noise
- * painted in the object's own color family, so each body has unique surface
- * detail without loading any image files.
- */
-function usePlanetTexture(color: string, seed: number, kind: string): THREE.CanvasTexture {
+function useBodyTextures(color: string, seed: number, kind: string) {
   return useMemo(() => {
-    const size = 256;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d")!;
-
-    // Parse base color
-    const hex = color.replace("#", "");
-    const br = parseInt(hex.slice(0, 2), 16);
-    const bg = parseInt(hex.slice(2, 4), 16);
-    const bb = parseInt(hex.slice(4, 6), 16);
-
-    // Seeded pseudo-random
-    let s = seed * 1000003 + 7;
-    const rand = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-
-    // Base fill
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, size, size);
-
-    if (kind === "star") {
-      // Folder/star: swirling plasma
-      for (let i = 0; i < 800; i++) {
-        const x = rand() * size;
-        const y = rand() * size;
-        const r2 = 3 + rand() * 18;
-        const alpha = 0.04 + rand() * 0.12;
-        const bright = rand() > 0.5;
-        const gr = ctx.createRadialGradient(x, y, 0, x, y, r2);
-        gr.addColorStop(0, `rgba(${bright ? 255 : br},${bright ? 240 : bg},${bright ? 180 : bb},${alpha})`);
-        gr.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = gr;
-        ctx.beginPath();
-        ctx.arc(x, y, r2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (kind === "planet") {
-      // File/planet: terrain with bands + craters
-      // Horizontal bands
-      for (let i = 0; i < 6; i++) {
-        const y = rand() * size;
-        const h = 4 + rand() * 28;
-        const alpha = 0.06 + rand() * 0.14;
-        const dark = rand() > 0.5;
-        ctx.fillStyle = `rgba(${dark ? br * 0.5 : Math.min(255, br * 1.4)},${dark ? bg * 0.5 : Math.min(255, bg * 1.4)},${dark ? bb * 0.5 : Math.min(255, bb * 1.4)},${alpha})`;
-        ctx.fillRect(0, y, size, h);
-      }
-      // Craters/spots
-      for (let i = 0; i < 14; i++) {
-        const x = rand() * size;
-        const y = rand() * size;
-        const r2 = 3 + rand() * 14;
-        const gr = ctx.createRadialGradient(x, y, 0, x, y, r2);
-        gr.addColorStop(0, `rgba(0,0,0,0.18)`);
-        gr.addColorStop(0.6, `rgba(${br},${bg},${bb},0.05)`);
-        gr.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = gr;
-        ctx.beginPath();
-        ctx.arc(x, y, r2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // Specular highlight
-      const spec = ctx.createRadialGradient(size * 0.35, size * 0.3, 0, size * 0.4, size * 0.4, size * 0.5);
-      spec.addColorStop(0, "rgba(255,255,255,0.15)");
-      spec.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = spec;
-      ctx.fillRect(0, 0, size, size);
-    } else {
-      // Moon: beautiful cratered surface using its own color family (purple/yellow)!
-      ctx.fillStyle = color;
-      ctx.fillRect(0, 0, size, size);
-      for (let i = 0; i < 20; i++) {
-        const x = rand() * size;
-        const y = rand() * size;
-        const r2 = 2 + rand() * 10;
-        ctx.fillStyle = `rgba(0,0,0,${0.15 + rand() * 0.25})`;
-        ctx.beginPath();
-        ctx.arc(x, y, r2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // Specular glow highlight
-      const spec = ctx.createRadialGradient(size * 0.35, size * 0.3, 0, size * 0.4, size * 0.4, size * 0.5);
-      spec.addColorStop(0, "rgba(255,255,255,0.22)");
-      spec.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = spec;
-      ctx.fillRect(0, 0, size, size);
+    if (kind === "planet") {
+      return {
+        map: makePlanetTexture(color, seed, 256),
+        bumpMap: makePlanetBumpMap(color, seed, 128),
+        bumpScale: 0.03,
+        glow: makeGlowTexture(color, "#02030a", 128),
+      };
     }
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
+    if (kind === "moon") {
+      return {
+        map: makeMoonTexture(color, seed, 256),
+        bumpMap: makeMoonBumpMap(seed, 128),
+        bumpScale: 0.05,
+        glow: makeGlowTexture(color, "#02030a", 128),
+      };
+    }
+    // star
+    return {
+      map: makeStarTexture(color, seed, 256),
+      bumpMap: null,
+      bumpScale: 0,
+      glow: makeGlowTexture("#fff8e0", color, 256),
+    };
   }, [color, seed, kind]);
 }
 
-// ─── Orbit path ring (the dashed line the planet travels along) ───────────
+// ─── Selection ring (PHASE 7.11 — visible selection state, not color-only) ──
 
-function OrbitPath({ radius, inclination }: { radius: number; inclination: number }) {
+function SelectionRing({ radius, color }: { radius: number; color: string }) {
+  const ref = useRef<THREE.Mesh>(null);
+  useFrame((_, delta) => { if (ref.current) ref.current.rotation.z += delta * 0.3; });
+  return (
+    <mesh ref={ref} rotation={[Math.PI / 2.6, 0.2, 0]}>
+      <ringGeometry args={[radius * 1.5, radius * 1.72, 64]} />
+      <meshBasicMaterial
+        color="#7dd3fc"
+        transparent
+        opacity={0.75}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </mesh>
+  );
+}
+
+// ─── Orbit path ring (the faint line the planet travels along) ─────────────
+
+function OrbitPath({ radius, inclination, color }: { radius: number; inclination: number; color: string }) {
   const geometry = useMemo(() => {
     const points: THREE.Vector3[] = [];
     const SEGMENTS = 128;
@@ -135,14 +92,14 @@ function OrbitPath({ radius, inclination }: { radius: number; inclination: numbe
     <line>
       {/* @ts-ignore — primitive line type */}
       <bufferGeometry attach="geometry" {...geometry} />
-      <lineBasicMaterial color="#ffffff" transparent opacity={0.06} depthWrite={false} />
+      <lineBasicMaterial color={color} transparent opacity={0.09} depthWrite={false} />
     </line>
   );
 }
 
 // ─── Saturn-style ring system ─────────────────────────────────────────────
 
-function RingSystem({ color, scale }: { color: string; scale: number }) {
+function RingSystem({ color, seed, scale }: { color: string; seed: number; scale: number }) {
   const mesh = useRef<THREE.Mesh>(null);
 
   // Rotate ring slightly differently from planet
@@ -150,41 +107,20 @@ function RingSystem({ color, scale }: { color: string; scale: number }) {
     if (mesh.current) mesh.current.rotation.z += delta * 0.02;
   });
 
-  const ringTexture = useMemo(() => {
-    const size = 256;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = 1;
-    const ctx = canvas.getContext("2d")!;
-    const grad = ctx.createLinearGradient(0, 0, size, 0);
-    grad.addColorStop(0,    "rgba(0,0,0,0)");
-    grad.addColorStop(0.15, `rgba(255,255,255,0.0)`);
-    grad.addColorStop(0.22, `rgba(255,255,255,0.4)`);
-    grad.addColorStop(0.38, `rgba(255,255,255,0.15)`);
-    grad.addColorStop(0.5,  `rgba(255,255,255,0.55)`);
-    grad.addColorStop(0.65, `rgba(255,255,255,0.1)`);
-    grad.addColorStop(0.78, `rgba(255,255,255,0.35)`);
-    grad.addColorStop(0.88, `rgba(255,255,255,0.05)`);
-    grad.addColorStop(1,    "rgba(0,0,0,0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, 1);
-    const t = new THREE.CanvasTexture(canvas);
-    t.needsUpdate = true;
-    return t;
-  }, []);
+  const ringTexture = useMemo(() => makeRingTexture(color, seed, 256), [color, seed]);
 
-  const innerR = scale * 0.9;
-  const outerR = scale * 1.8;
+  const innerR = scale * 1.25;
+  const outerR = scale * 2.1;
 
   return (
     <mesh ref={mesh} rotation={[Math.PI / 2.2, 0.15, 0]}>
-      <ringGeometry args={[innerR, outerR, 64]} />
+      <ringGeometry args={[innerR, outerR, 96]} />
       <meshBasicMaterial
         map={ringTexture}
         color={color}
         side={THREE.DoubleSide}
         transparent
-        opacity={0.55}
+        opacity={0.85}
         depthWrite={false}
         blending={THREE.AdditiveBlending}
       />
@@ -192,21 +128,34 @@ function RingSystem({ color, scale }: { color: string; scale: number }) {
   );
 }
 
-// ─── Atmosphere glow shell ────────────────────────────────────────────────
+// ─── Atmosphere glow shell (two-layer rim) ────────────────────────────────
 
-function AtmosphereGlow({ radius, color }: { radius: number; color: string }) {
+function AtmosphereGlow({ radius, color, atmosphereColor }: { radius: number; color: string; atmosphereColor?: string }) {
   return (
-    <mesh>
-      <sphereGeometry args={[radius * 1.18, 24, 24]} />
-      <meshBasicMaterial
-        color={color}
-        transparent
-        opacity={0.07}
-        side={THREE.BackSide}
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </mesh>
+    <>
+      <mesh>
+        <sphereGeometry args={[radius * 1.09, 32, 32]} />
+        <meshBasicMaterial
+          color={atmosphereColor ?? color}
+          transparent
+          opacity={0.1}
+          side={THREE.BackSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[radius * 1.2, 24, 24]} />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={0.05}
+          side={THREE.BackSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+    </>
   );
 }
 
@@ -214,9 +163,9 @@ function AtmosphereGlow({ radius, color }: { radius: number; color: string }) {
 
 /**
  * Renders one orbiting body. Visual differences by kind:
- * - star   (folder): icosahedron, plasma texture, size driven by fileCount
- * - planet (file):   sphere with procedural terrain texture, optional rings
- * - moon   (fn):     octahedron, cratered grey
+ * - star   (folder): plasma-textured sun with corona glow sprite + light
+ * - planet (file):   sphere with procedural terrain, ice caps, atmosphere, optional rings
+ * - moon   (fn):     cratered sphere with strong relief bump lighting
  *
  * Each body gets its own inclination and phase, plus a faint orbital path.
  */
@@ -224,9 +173,10 @@ export function OrbitingBody({ object, children }: OrbitingBodyProps) {
   const groupRef = useRef<THREE.Group>(null);
   const meshRef  = useRef<THREE.Mesh>(null);
   const [labelVisible, setLabelVisible] = useState(false);
-  const { hoveredId, hover, navigateTo } = useNavigation();
+  const { hoveredId, hover, navigateTo, selectedId, selectObject, isCut } = useNavigation();
 
   const isHovered = hoveredId === object.id;
+  const isSelected = selectedId === object.id;
   const angleOffset = useRef(Math.random() * Math.PI * 2).current;
   const seedVal = useRef(Math.floor(Math.random() * 99999)).current;
 
@@ -240,25 +190,29 @@ export function OrbitingBody({ object, children }: OrbitingBodyProps) {
     : object.scale;
 
   // Scale hierarchy: Sun (FocusBody) >> Star (Folder) >> Planet (File) >> Moon (Symbol)
-  // Scale hierarchy: Sun (FocusBody) >> Star (Folder) >> Planet (File) >> Moon (Symbol)
-  let meshScale = 
+  // PHASE 7.5: moons get a floor (readable/clickable) and a cap (never rival
+  // the parent planet).
+  let meshScale =
     object.kind === "star"   ? fileCountScale * 1.6 :
     object.kind === "planet" ? object.scale * 0.8 :
-                               object.scale * 3.0; // Increased from 1.8 to 3.0 to make moons much bigger!
+    Math.min(
+      Math.max(object.scale * BODY_SCALE.moonMultiplier, BODY_SCALE.moonMinScale),
+      BODY_SCALE.moonMaxScale
+    );
 
-  const isRed = 
-    object.color?.toLowerCase() === '#ef4444' || 
-    object.color?.toLowerCase() === '#e34c26' || 
-    object.color?.toLowerCase() === '#ff2255' || 
+  const isRed =
+    object.color?.toLowerCase() === '#ef4444' ||
+    object.color?.toLowerCase() === '#e34c26' ||
+    object.color?.toLowerCase() === '#ff2255' ||
     object.color?.toLowerCase() === '#ff0000';
 
   if (isRed) {
     if (object.kind === "planet") {
-      meshScale = object.scale * 1.2; // Boosted from 0.8 to 1.2
+      meshScale = object.scale * 1.2;
     } else if (object.kind === "star") {
-      meshScale = fileCountScale * 2.2; // Boosted from 1.6 to 2.2
+      meshScale = fileCountScale * 2.2;
     } else if (object.kind === "moon") {
-      meshScale = object.scale * 4.0; // Boosted from 3.0 to 4.0
+      meshScale = object.scale * 4.0;
     }
   }
 
@@ -269,17 +223,31 @@ export function OrbitingBody({ object, children }: OrbitingBodyProps) {
                                0.45;
   const physicalRadius = geoRadius * meshScale;
 
-  // Procedural texture
-  const texture = usePlanetTexture(object.color, seedVal, object.kind);
+  // Procedural textures (per kind)
+  const { map, bumpMap, bumpScale, glow } = useBodyTextures(object.color, seedVal, object.kind);
+
+  // PHASE 24 — dispose GPU textures when this body unmounts (navigation /
+  // cut). Textures are per-body (seeded), so they are never shared.
+  useEffect(() => {
+    return () => {
+      map?.dispose();
+      bumpMap?.dispose();
+      glow?.dispose();
+    };
+  }, [map, bumpMap, glow]);
 
   // Self-rotation speed (stars spin fast like young suns, moons are tidally locked)
+  // PHASE 7.7 — speeds come from the central motion config.
   const selfRotSpeed =
-    object.kind === "star"   ? 0.4 :
-    object.kind === "planet" ? 0.12 :
-                               0.0;
+    object.kind === "star"   ? SELF_ROTATION.star :
+    object.kind === "planet" ? SELF_ROTATION.planet :
+                               SELF_ROTATION.moon;
 
   useFrame(({ clock }, delta) => {
-    const t = clock.getElapsedTime() * speed + angleOffset;
+    // PHASE 7.6/7.8 — time-based orbit: data speed × global cinematic scale ×
+    // delta. Frame-rate independent; never angle += constant.
+    const speed = (object.orbitSpeed ?? ORBIT_SPEED[object.kind as keyof typeof ORBIT_SPEED] ?? 0.1) * GLOBAL_ORBIT_SCALE;
+    const t = clock.getElapsedTime() * speed * (object.direction ?? 1) + angleOffset;
     const x = Math.cos(t) * radius;
     const zFlat = Math.sin(t) * radius;
     const y = zFlat * Math.sin(inclination);
@@ -288,7 +256,7 @@ export function OrbitingBody({ object, children }: OrbitingBodyProps) {
     if (groupRef.current) groupRef.current.position.set(x, y, z);
     if (meshRef.current) {
       meshRef.current.rotation.y += delta * selfRotSpeed;
-      
+
       // Calculate and store world position instead of local coordinates
       const worldPos = new THREE.Vector3();
       meshRef.current.getWorldPosition(worldPos);
@@ -297,61 +265,92 @@ export function OrbitingBody({ object, children }: OrbitingBodyProps) {
   });
 
   const emissiveIntensity =
-    object.kind === "star"   ? (isHovered ? 1.1 : 0.8) :
+    object.kind === "star"   ? (isHovered ? 1.2 : 0.9) :
     isHovered                ? 0.55 :
     object.kind === "moon"   ? 0.05 :
-                               0.18;
+                               0.16;
+
+  // All bodies are spheres now — moons included (octahedron read as "dots")
+  const segments = object.kind === "moon" ? 32 : 40;
+
+  // PHASE 15 — Cut: a cut body is removed from the universe view entirely
+  // (children are nested inside this group, so they disappear with it).
+  if (isCut(object.id)) return null;
 
   return (
     <group ref={groupRef}>
       {/* ── Faint orbital path ── */}
-      <OrbitPath radius={radius} inclination={inclination} />
+      <OrbitPath radius={radius} inclination={inclination} color={object.color} />
 
       {/* ── Main body ── */}
       <mesh
         ref={meshRef}
         scale={meshScale}
-        onClick={(e) => { e.stopPropagation(); navigateTo(object.id); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          selectObject(object.id);   // persistent highlight + info (PHASE 7.10)
+          navigateTo(object.id);     // camera focus flight
+        }}
         onPointerOver={(e) => { e.stopPropagation(); hover(object.id); setLabelVisible(true); }}
         onPointerOut={() => { hover(null); setLabelVisible(false); }}
       >
-        {object.kind === "star"   && <icosahedronGeometry args={[geoRadius, 2]} />}
-        {object.kind === "planet" && <sphereGeometry args={[geoRadius, 32, 32]} />}
-        {object.kind === "moon"   && <octahedronGeometry args={[geoRadius, 1]} />}
+        <sphereGeometry args={[geoRadius, segments, segments]} />
 
         <meshStandardMaterial
-          map={texture}
+          map={map}
+          bumpMap={bumpMap ?? undefined}
+          bumpScale={bumpScale}
           color={object.color}
           emissive={object.color}
+          emissiveMap={object.kind === "star" ? map : undefined}
           emissiveIntensity={emissiveIntensity}
-          roughness={object.roughness ?? (object.kind === "star" ? 0.25 : object.kind === "moon" ? 0.95 : 0.55)}
-          metalness={object.metalness ?? (object.kind === "star" ? 0.1 : 0.2)}
+          roughness={object.roughness ?? (object.kind === "star" ? 0.35 : object.kind === "moon" ? 0.95 : 0.6)}
+          metalness={object.metalness ?? (object.kind === "star" ? 0 : object.kind === "moon" ? 0.02 : 0.15)}
         />
       </mesh>
 
-      {/* ── Atmosphere glow (planets) ── */}
-      {object.kind === "planet" && object.atmosphereColor && (
-        <AtmosphereGlow radius={physicalRadius} color={object.atmosphereColor} />
+      {/* ── Selection ring (PHASE 7.11 — explicit selected state) ── */}
+      {isSelected && <SelectionRing radius={physicalRadius} color={object.color} />}
+
+      {/* ── Soft glow sprite behind every body (corona for stars, halo for planets) ── */}
+      <sprite scale={[physicalRadius * (object.kind === "star" ? 5.2 : 2.6), physicalRadius * (object.kind === "star" ? 5.2 : 2.6), 1]}>
+        <spriteMaterial
+          map={glow}
+          color={object.color}
+          transparent
+          opacity={object.kind === "star" ? (isHovered ? 0.85 : 0.65) : 0.22}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
+
+      {/* ── Atmosphere rim (planets) ── */}
+      {object.kind === "planet" && (
+        <AtmosphereGlow
+          radius={physicalRadius}
+          color={object.color}
+          atmosphereColor={object.atmosphereColor}
+        />
       )}
 
-      {/* ── Star corona ── */}
+      {/* ── Star extra corona layers ── */}
       {object.kind === "star" && (
         <>
-          <mesh scale={meshScale * 1.05}>
-            <sphereGeometry args={[geoRadius * 0.95, 16, 16]} />
-            <meshBasicMaterial color={object.color} transparent opacity={0.1} depthWrite={false} blending={THREE.AdditiveBlending} />
+          <mesh scale={meshScale * 1.06}>
+            <sphereGeometry args={[geoRadius * 0.95, 24, 24]} />
+            <meshBasicMaterial color={object.color} transparent opacity={0.12} depthWrite={false} blending={THREE.AdditiveBlending} />
           </mesh>
-          <mesh scale={meshScale * 1.18}>
-            <sphereGeometry args={[geoRadius * 0.9, 12, 12]} />
-            <meshBasicMaterial color={object.atmosphereColor ?? object.color} transparent opacity={0.04} depthWrite={false} blending={THREE.AdditiveBlending} />
+          <mesh scale={meshScale * 1.2}>
+            <sphereGeometry args={[geoRadius * 0.9, 16, 16]} />
+            <meshBasicMaterial color={object.atmosphereColor ?? object.color} transparent opacity={0.05} depthWrite={false} blending={THREE.AdditiveBlending} />
           </mesh>
-          <pointLight intensity={1.2} distance={12} color={object.color} />
+          <pointLight intensity={1.4} distance={14} color={object.color} />
         </>
       )}
 
       {/* ── Ring system (opted-in per file/planet) ── */}
       {object.hasRings && object.kind === "planet" && (
-        <RingSystem color={object.color} scale={physicalRadius} />
+        <RingSystem color={object.color} seed={seedVal} scale={physicalRadius} />
       )}
 
       {/* ── Label ── */}

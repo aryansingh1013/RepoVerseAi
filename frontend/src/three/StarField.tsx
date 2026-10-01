@@ -1,6 +1,10 @@
 import { useMemo, useRef, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { getQualityBudget } from "./motionConfig";
+
+// PHASE 8/9 — star counts scale with device tier; computed once.
+const BUDGET = getQualityBudget();
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
@@ -280,11 +284,13 @@ function GalacticCore() {
 export function StarField() {
   return (
     <>
-      {/* ── Distant shell layers (parallax depth) ── */}
-      <StarLayer count={900}  radius={60} size={0.05} opacity={0.5}  driftSpeed={0.003} color="#8fa3d1" />
-      <StarLayer count={1400} radius={40} size={0.07} opacity={0.7}  driftSpeed={0.008} color="#c9d6f5" />
-      <StarLayer count={600}  radius={22} size={0.09} opacity={0.9}  driftSpeed={0.015} color="#ffffff"  />
-      <StarLayer count={30}   radius={70} size={0.6}  opacity={0.12} driftSpeed={0.001} color="#b8c6ff" />
+      {/* ── Distant shell layers (parallax depth) ──
+          PHASE 7.14/8: pushed outward (inner shell ≥ 80) so stars never fly
+          through the scene; counts scale with device tier. */}
+      <StarLayer count={BUDGET.starCounts[0]} radius={80} size={0.05} opacity={0.5}  driftSpeed={0.003} color="#8fa3d1" />
+      <StarLayer count={BUDGET.starCounts[1]} radius={110} size={0.07} opacity={0.7}  driftSpeed={0.008} color="#c9d6f5" />
+      <StarLayer count={BUDGET.starCounts[2]} radius={150} size={0.09} opacity={0.9}  driftSpeed={0.015} color="#ffffff"  />
+      <StarLayer count={BUDGET.starCounts[3]} radius={95} size={0.6}  opacity={0.12} driftSpeed={0.001} color="#b8c6ff" />
 
       {/* ── Milky Way spiral arms ── */}
       <SpiralArm armIndex={0} totalArms={2} />

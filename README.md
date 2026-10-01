@@ -60,17 +60,31 @@ SUMMERTRAININGPROJECT/
 - Python 3.10+
 - Node.js 18+
 
+### 0. Local LLM (primary — no API keys needed)
+RepoVerse is local-first: skills and chat run on **Ollama / Qwen3:8B** by default.
+```bash
+ollama serve
+ollama pull qwen3:8b
+ollama list
+```
+
 ### 1. Setup Backend
-Create a `.env` file inside `backend/.env` with your API keys:
+Create a `.env` file inside `backend/.env`:
 ```env
 HOST=0.0.0.0
 PORT=8000
-WORKSPACE_DIR=c:/Users/Aryan Singh/OneDrive/Desktop/SUMMERTRAININGPROJECT
 
-# LLM Providers (At least one is required)
-GROQ_API_KEY=your_groq_api_key
-OPENAI_API_KEY=your_openai_api_key
-GEMINI_API_KEY=your_gemini_api_key
+# Local-first LLM (defaults shown; override only if needed)
+OLLAMA_ENDPOINT=http://localhost:11434/v1
+OLLAMA_DEFAULT_MODEL=qwen3:8b
+OLLAMA_TIMEOUT=600
+
+# Optional cloud fallbacks (leave empty to stay fully local)
+GROQ_API_KEY=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+OPENROUTER_API_KEY=
+HF_TOKEN=
 ```
 
 Install dependencies and start the Uvicorn server:
@@ -91,13 +105,17 @@ Open your browser and navigate to `http://localhost:5173`.
 
 ---
 
-## ⚙️ Configurable API Secrets
+## ⚙️ LLM Configuration
 
 | Environment Variable | Description |
 |---|---|
-| `GROQ_API_KEY` | Recommended primary LLM provider (using Llama-3.3-70b) |
-| `OPENAI_API_KEY` | Optional fallback provider |
-| `GEMINI_API_KEY` | Optional fallback provider |
+| `OLLAMA_ENDPOINT` | Local Ollama OpenAI-compatible endpoint (default `http://localhost:11434/v1`) |
+| `OLLAMA_DEFAULT_MODEL` | Primary local model (default `qwen3:8b`) |
+| `OLLAMA_TIMEOUT` | Local generation timeout in seconds (default `600` — CPU inference is slow) |
+| `GROQ_API_KEY` | Optional cloud fallback (current production models: `openai/gpt-oss-120b`, `openai/gpt-oss-20b`) |
+| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `OPENROUTER_API_KEY` | Optional cloud fallbacks |
+
+Skills documentation (what each skill does, universe isolation, testing): see [docs/SKILLS.md](docs/SKILLS.md).
 
 ---
 

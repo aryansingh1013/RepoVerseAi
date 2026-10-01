@@ -2,12 +2,15 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Sparkles, X, ChevronRight, Brain, AlertCircle, FileText, CheckCircle2 } from "lucide-react";
 import { useNavigation } from "@/hooks/useNavigation";
+import { useChat } from "@/hooks/useChat";
 import { clsx } from "@/utils/clsx";
 
 export function AIOrb() {
   const {
     isMissionControlOpen,
     setMissionControlOpen,
+  } = useNavigation();
+  const {
     messages,
     input,
     setInput,
@@ -17,7 +20,7 @@ export function AIOrb() {
     submitMessage,
     selectedMessageId,
     setSelectedMessageId
-  } = useNavigation();
+  } = useChat();
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 

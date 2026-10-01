@@ -52,7 +52,16 @@ class GitTimelineSkill(BaseSkill):
             return result
 
         # Try running git log via subprocess
+        total_commits_real = 0
         try:
+            # Real commit count first (the log below is capped at 50 for display)
+            count_proc = subprocess.run(
+                ["git", "-C", workspace_dir, "rev-list", "--count", "HEAD"],
+                capture_output=True, text=True, timeout=10
+            )
+            if count_proc.returncode == 0 and count_proc.stdout.strip().isdigit():
+                total_commits_real = int(count_proc.stdout.strip())
+
             proc = subprocess.run(
                 ["git", "-C", workspace_dir, "log",
                  "--pretty=format:%H|%an|%ad|%s",
@@ -107,7 +116,11 @@ class GitTimelineSkill(BaseSkill):
         result = {
             "timeline": timeline[:40],
             "contributors": contributor_list,
-            "total_commits": len(timeline),
+            "total_commits": total_commits_real or len(timeline),
+            "total_commits_note": (
+                f"Showing latest {min(len(timeline), 40)} of {total_commits_real} commits."
+                if total_commits_real > 40 else ""
+            ),
         }
 
         set_cached("timeline", workspace_dir, result)

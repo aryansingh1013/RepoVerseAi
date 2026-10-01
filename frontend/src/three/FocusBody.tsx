@@ -1,153 +1,23 @@
-import { useRef, useMemo } from "react";
+import { useRef, useMemo, useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { positionsRegistry } from "./positionsRegistry";
 import { useNavigation } from "@/hooks/useNavigation";
+import { SELF_ROTATION } from "./motionConfig";
+import {
+  makePlanetTexture,
+  makePlanetBumpMap,
+  makeMoonTexture,
+  makeMoonBumpMap,
+  makeStarTexture,
+  makeGlowTexture,
+  makeGalaxyDiscTexture,
+  makeRingTexture,
+} from "./textures";
 import type { SpaceObject } from "@/types";
 
 interface FocusBodyProps {
   object: SpaceObject;
-}
-
-// ─── Procedural surface texture (same generator as OrbitingBody) ──────────
-
-function useSurfaceTexture(color: string, seed: number, kind: string, size = 512): THREE.CanvasTexture {
-  return useMemo(() => {
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d")!;
-
-    const hex = color.replace("#", "");
-    const br = parseInt(hex.slice(0, 2), 16);
-    const bg = parseInt(hex.slice(2, 4), 16);
-    const bb = parseInt(hex.slice(4, 6), 16);
-
-    let s = seed * 1000003 + 7;
-    const rand = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, size, size);
-
-    if (kind === "galaxy") {
-      // Wireframe galaxy: swirling arms drawn as curves
-      for (let arm = 0; arm < 3; arm++) {
-        ctx.beginPath();
-        const baseAngle = (arm / 3) * Math.PI * 2;
-        for (let i = 0; i < 200; i++) {
-          const t = i / 200;
-          const angle = baseAngle + t * Math.PI * 2.5;
-          const r = t * size * 0.45;
-          const cx = size / 2 + Math.cos(angle) * r;
-          const cy = size / 2 + Math.sin(angle) * r;
-          i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
-        }
-        ctx.strokeStyle = `rgba(${Math.min(255,br+60)},${Math.min(255,bg+60)},${Math.min(255,bb+80)},0.25)`;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-      // Core glow
-      const cg = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size * 0.3);
-      cg.addColorStop(0, `rgba(255,255,220,0.4)`);
-      cg.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = cg;
-      ctx.fillRect(0, 0, size, size);
-    } else if (kind === "star") {
-      // Folder: animated plasma surface
-      for (let i = 0; i < 1200; i++) {
-        const x = rand() * size;
-        const y = rand() * size;
-        const r = 3 + rand() * 22;
-        const alpha = 0.03 + rand() * 0.15;
-        const bright = rand() > 0.4;
-        const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
-        gr.addColorStop(0, `rgba(${bright ? 255 : br},${bright ? 235 : bg},${bright ? 160 : bb},${alpha})`);
-        gr.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = gr;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (kind === "planet") {
-      // File: rich terrain — bands, continent blobs, specular
-      for (let i = 0; i < 8; i++) {
-        const y = rand() * size;
-        const h = 8 + rand() * 60;
-        const dark = rand() > 0.5;
-        ctx.fillStyle = `rgba(${dark ? br*0.45 : Math.min(255,br*1.5)},${dark ? bg*0.45 : Math.min(255,bg*1.5)},${dark ? bb*0.45 : Math.min(255,bb*1.5)},${0.08 + rand()*0.18})`;
-        ctx.fillRect(0, y, size, h);
-      }
-      // Continent blobs
-      for (let i = 0; i < 8; i++) {
-        const cx = rand() * size;
-        const cy = rand() * size;
-        const rx = 20 + rand() * 80;
-        const ry = 15 + rand() * 50;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, rx, ry, rand() * Math.PI, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${Math.min(255,br+40)},${Math.min(255,bg+30)},${Math.min(255,bb+20)},0.12)`;
-        ctx.fill();
-      }
-      // Craters
-      for (let i = 0; i < 18; i++) {
-        const x = rand() * size;
-        const y = rand() * size;
-        const r = 4 + rand() * 22;
-        const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
-        gr.addColorStop(0, `rgba(0,0,0,0.22)`);
-        gr.addColorStop(0.5, `rgba(${br},${bg},${bb},0.06)`);
-        gr.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = gr;
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      }
-      // Specular highlight
-      const spec = ctx.createRadialGradient(size*0.32, size*0.28, 0, size*0.42, size*0.38, size*0.55);
-      spec.addColorStop(0, "rgba(255,255,255,0.2)");
-      spec.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = spec; ctx.fillRect(0, 0, size, size);
-    } else {
-      // Moon: grey cratered surface
-      ctx.fillStyle = "#aaa"; ctx.fillRect(0, 0, size, size);
-      for (let i = 0; i < 30; i++) {
-        const x = rand() * size;
-        const y = rand() * size;
-        const r = 3 + rand() * 20;
-        ctx.fillStyle = `rgba(0,0,0,${0.12 + rand()*0.25})`;
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = `rgba(255,255,255,0.05)`;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-    }
-
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }, [color, seed, kind, size]);
-}
-
-// ─── Bump / normal-esque roughness texture ─────────────────────────────────
-
-function useBumpTexture(seed: number): THREE.CanvasTexture {
-  return useMemo(() => {
-    const size = 256;
-    const canvas = document.createElement("canvas");
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext("2d")!;
-    let s = seed * 999983;
-    const rand = () => { s = (s * 16807) % 2147483647; return (s-1)/2147483646; };
-    ctx.fillStyle = "#808080"; ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 600; i++) {
-      const x = rand() * size; const y = rand() * size;
-      const r = 2 + rand() * 12;
-      const v = Math.floor(60 + rand() * 140);
-      ctx.fillStyle = `rgba(${v},${v},${v},0.3)`;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }, [seed]);
 }
 
 // ─── Atmosphere layers ─────────────────────────────────────────────────────
@@ -157,10 +27,10 @@ function AtmosphereLayers({ radius, color, atmosphereColor }: { radius: number; 
     <>
       {/* Inner atmosphere — the main color haze */}
       <mesh>
-        <sphereGeometry args={[radius * 1.06, 32, 32]} />
+        <sphereGeometry args={[radius * 1.06, 48, 48]} />
         <meshBasicMaterial
           color={atmosphereColor ?? color}
-          transparent opacity={0.08}
+          transparent opacity={0.1}
           side={THREE.BackSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
@@ -168,10 +38,10 @@ function AtmosphereLayers({ radius, color, atmosphereColor }: { radius: number; 
       </mesh>
       {/* Outer fringe */}
       <mesh>
-        <sphereGeometry args={[radius * 1.18, 24, 24]} />
+        <sphereGeometry args={[radius * 1.18, 32, 32]} />
         <meshBasicMaterial
           color={color}
-          transparent opacity={0.04}
+          transparent opacity={0.05}
           side={THREE.BackSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
@@ -183,37 +53,20 @@ function AtmosphereLayers({ radius, color, atmosphereColor }: { radius: number; 
 
 // ─── Ring system for focused planet ───────────────────────────────────────
 
-function FocusRings({ radius, color }: { radius: number; color: string }) {
-  const ringTex = useMemo(() => {
-    const size = 512;
-    const canvas = document.createElement("canvas");
-    canvas.width = size; canvas.height = 1;
-    const ctx = canvas.getContext("2d")!;
-    const grad = ctx.createLinearGradient(0, 0, size, 0);
-    grad.addColorStop(0,    "rgba(0,0,0,0)");
-    grad.addColorStop(0.08, "rgba(255,255,255,0)");
-    grad.addColorStop(0.18, "rgba(255,255,255,0.5)");
-    grad.addColorStop(0.32, "rgba(255,255,255,0.15)");
-    grad.addColorStop(0.45, "rgba(255,255,255,0.6)");
-    grad.addColorStop(0.58, "rgba(255,255,255,0.1)");
-    grad.addColorStop(0.7,  "rgba(255,255,255,0.45)");
-    grad.addColorStop(0.84, "rgba(255,255,255,0.05)");
-    grad.addColorStop(1,    "rgba(0,0,0,0)");
-    ctx.fillStyle = grad; ctx.fillRect(0, 0, size, 1);
-    const t = new THREE.CanvasTexture(canvas); t.needsUpdate = true; return t;
-  }, []);
+function FocusRings({ radius, color, seed }: { radius: number; color: string; seed: number }) {
+  const ringTex = useMemo(() => makeRingTexture(color, seed, 512), [color, seed]);
 
   const ref = useRef<THREE.Mesh>(null);
   useFrame((_, delta) => { if (ref.current) ref.current.rotation.z += delta * 0.01; });
 
   return (
     <mesh ref={ref} rotation={[Math.PI / 2.3, 0.2, 0]}>
-      <ringGeometry args={[radius * 1.35, radius * 2.4, 128]} />
+      <ringGeometry args={[radius * 1.4, radius * 2.5, 128]} />
       <meshBasicMaterial
         map={ringTex}
         color={color}
         side={THREE.DoubleSide}
-        transparent opacity={0.6}
+        transparent opacity={0.9}
         depthWrite={false}
         blending={THREE.AdditiveBlending}
       />
@@ -221,44 +74,61 @@ function FocusRings({ radius, color }: { radius: number; color: string }) {
   );
 }
 
-// ─── Galaxy wireframe disc ─────────────────────────────────────────────────
+// ─── Galaxy — layered spiral disc with glow core ───────────────────────────
 
-function GalaxyDisc({ color }: { color: string }) {
+function GalaxyDisc({ color, seed }: { color: string; seed: number }) {
   const ref = useRef<THREE.Group>(null);
-  useFrame((_, delta) => { if (ref.current) ref.current.rotation.y += delta * 0.04; });
+  useFrame((_, delta) => {
+    // PHASE 7.7 — calm galaxy disc rotation (rad/s, delta-based)
+    if (ref.current) ref.current.rotation.z += delta * SELF_ROTATION.galaxy;
+  });
 
-  const armPositions = useMemo(() => {
-    const points: THREE.Vector3[] = [];
-    for (let arm = 0; arm < 3; arm++) {
-      const base = (arm / 3) * Math.PI * 2;
-      for (let i = 0; i < 60; i++) {
-        const t = i / 60;
-        const angle = base + t * Math.PI * 2.5;
-        const r = t * 2.8;
-        points.push(new THREE.Vector3(Math.cos(angle) * r, (Math.random() - 0.5) * 0.1, Math.sin(angle) * r));
-      }
-    }
-    return new THREE.BufferGeometry().setFromPoints(points);
-  }, []);
+  const discTex = useMemo(() => makeGalaxyDiscTexture(color, seed, 1024), [color, seed]);
+  const glowTex = useMemo(() => makeGlowTexture("#fff9e8", color, 256), [color, seed]);
+
+  // PHASE 24 — dispose galaxy disc textures on unmount
+  useEffect(() => {
+    return () => { discTex.dispose(); glowTex.dispose(); };
+  }, [discTex, glowTex]);
 
   return (
-    <group ref={ref}>
-      {/* Outer disc glow */}
+    <group ref={ref} rotation={[Math.PI / 2.4, 0, 0]}>
+      {/* Textured spiral disc */}
       <mesh>
-        <torusGeometry args={[2.2, 0.35, 8, 64]} />
-        <meshBasicMaterial color={color} transparent opacity={0.08} depthWrite={false} blending={THREE.AdditiveBlending} />
+        <circleGeometry args={[3.2, 96]} />
+        <meshBasicMaterial
+          map={discTex}
+          color={color}
+          transparent
+          opacity={0.9}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
       </mesh>
-      {/* Inner disc */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.6, 2.6, 64]} />
-        <meshBasicMaterial color={color} transparent opacity={0.06} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
+      {/* Faint counter-rotating halo disc */}
+      <mesh rotation={[0, 0, Math.PI / 5]}>
+        <ringGeometry args={[2.2, 4.2, 96]} />
+        <meshBasicMaterial
+          color={color}
+          transparent
+          opacity={0.05}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
       </mesh>
-      {/* Spiral arm lines */}
-      <line>
-        {/* @ts-ignore */}
-        <bufferGeometry attach="geometry" {...armPositions} />
-        <lineBasicMaterial color={color} transparent opacity={0.25} depthWrite={false} />
-      </line>
+      {/* Hot core glow sprite */}
+      <sprite scale={[7.5, 7.5, 1]}>
+        <spriteMaterial
+          map={glowTex}
+          color={color}
+          transparent
+          opacity={0.75}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </sprite>
     </group>
   );
 }
@@ -267,36 +137,86 @@ function GalaxyDisc({ color }: { color: string }) {
 
 /**
  * The focused object at the scene origin.
- * - galaxy   → icosahedron wireframe + swirling galactic disc overlay
- * - star     → large textured sphere with plasma surface + corona layers
- * - planet   → richly textured sphere with atmosphere, bump, optional rings
- * - moon     → grey cratered octahedron
+ * - galaxy → glowing core + textured multi-arm spiral disc
+ * - star   → plasma-granulated sun with corona glow layers
+ * - planet → noise-terrain sphere, cloud layer, atmosphere, optional rings
+ * - moon   → heavily cratered sphere with strong relief lighting
  */
 export function FocusBody({ object }: FocusBodyProps) {
   const meshRef   = useRef<THREE.Mesh>(null);
   const cloudRef  = useRef<THREE.Mesh>(null);
+  const glowRef   = useRef<THREE.Sprite>(null);
   const { goBack, hover, hoveredId, setMissionControlOpen } = useNavigation();
   const isHovered = hoveredId === object.id;
 
   const seed = useMemo(() => object.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0), [object.id]);
-  const surfaceTex = useSurfaceTexture(object.color, seed, object.kind, 512);
-  const bumpTex    = useBumpTexture(seed);
+
+  // Per-kind procedural textures from the shared engine
+  const { map, bumpMap, bumpScale, glowTex } = useMemo(() => {
+    switch (object.kind) {
+      case "star":
+        return {
+          map: makeStarTexture(object.color, seed, 512),
+          bumpMap: null,
+          bumpScale: 0,
+          glowTex: makeGlowTexture("#fff8e0", object.color, 512),
+        };
+      case "planet":
+        return {
+          map: makePlanetTexture(object.color, seed, 1024),
+          bumpMap: makePlanetBumpMap(object.color, seed, 256),
+          bumpScale: 0.05,
+          glowTex: makeGlowTexture(object.color, "#02030a", 256),
+        };
+      case "moon":
+        return {
+          map: makeMoonTexture(object.color, seed, 512),
+          bumpMap: makeMoonBumpMap(seed, 256),
+          bumpScale: 0.06,
+          glowTex: makeGlowTexture(object.color, "#02030a", 256),
+        };
+      default: // galaxy
+        return {
+          map: null,
+          bumpMap: null,
+          bumpScale: 0,
+          glowTex: makeGlowTexture("#fff9e8", object.color, 512),
+        };
+    }
+  }, [object.kind, object.color, seed]);
 
   useFrame((_, delta) => {
-    if (meshRef.current)  meshRef.current.rotation.y  += delta * (object.kind === "star" ? 0.15 : 0.06);
-    if (cloudRef.current) cloudRef.current.rotation.y += delta * 0.1; // cloud layer drifts faster
+    // PHASE 7.7 — rotation speeds from central motion config (rad/s, delta-based)
+    const spin = object.kind === "star" ? SELF_ROTATION.star : SELF_ROTATION.planet;
+    if (meshRef.current)  meshRef.current.rotation.y  += delta * spin;
+    if (cloudRef.current) cloudRef.current.rotation.y += delta * SELF_ROTATION.moon * 3; // cloud drift
+    if (glowRef.current) {
+      // Corona pulse for stars/galaxies
+      const pulse = 1 + Math.sin(performance.now() * 0.0012) * 0.04;
+      const s = (object.kind === "star" ? 5.4 : 4.2) * pulse * (isHovered ? 1.1 : 1);
+      glowRef.current.scale.set(s, s, 1);
+    }
     positionsRegistry.set(object.id, 0, 0, 0);
   });
+
+  // PHASE 24 — dispose per-kind focus textures on unmount
+  useEffect(() => {
+    return () => {
+      map?.dispose();
+      bumpMap?.dispose();
+      glowTex?.dispose();
+    };
+  }, [map, bumpMap, glowTex]);
 
   const canAscend  = object.parentId !== null;
   const baseRadius = 1.8 + object.scale * 1.5;
 
   return (
     <group
-      onClick={(e) => { 
-        e.stopPropagation(); 
+      onClick={(e) => {
+        e.stopPropagation();
         if (canAscend) {
-          goBack(); 
+          goBack();
         } else {
           setMissionControlOpen(true);
         }
@@ -307,56 +227,68 @@ export function FocusBody({ object }: FocusBodyProps) {
       {/* ── Galaxy (repository) ── */}
       {object.kind === "galaxy" && (
         <>
-          <mesh ref={meshRef}>
-            <icosahedronGeometry args={[baseRadius + 0.4, 1]} />
-            <meshStandardMaterial
-              color={object.color}
-              emissive={object.color}
-              emissiveIntensity={isHovered ? 0.9 : 0.6}
-              roughness={0.4} metalness={0.5}
-              wireframe
-            />
-          </mesh>
-          {/* Solid inner core */}
+          {/* Swirling spiral disc + core */}
+          <GalaxyDisc color={object.color} seed={seed} />
+          {/* Small molten core sphere under the glow */}
           <mesh>
-            <sphereGeometry args={[baseRadius * 0.45, 24, 24]} />
+            <sphereGeometry args={[baseRadius * 0.22, 32, 32]} />
             <meshStandardMaterial
-              map={surfaceTex}
-              color={object.color}
+              color="#fff4d6"
               emissive={object.color}
-              emissiveIntensity={0.5}
-              roughness={0.3} metalness={0.6}
+              emissiveIntensity={1.4}
+              roughness={0.3} metalness={0}
             />
           </mesh>
-          {/* Galactic disc overlay */}
-          <GalaxyDisc color={object.color} />
+          {/* Core glow sprite (pulsing) */}
+          <sprite ref={glowRef} scale={[4.2, 4.2, 1]}>
+            <spriteMaterial
+              map={glowTex}
+              color={object.color}
+              transparent
+              opacity={0.8}
+              depthWrite={false}
+              blending={THREE.AdditiveBlending}
+            />
+          </sprite>
         </>
       )}
 
-      {/* ── Star (folder) ── */}
+      {/* ── Star (folder) — the focused sun ── */}
       {object.kind === "star" && (
         <>
           <mesh ref={meshRef}>
-            <sphereGeometry args={[baseRadius, 48, 48]} />
+            <sphereGeometry args={[baseRadius, 64, 64]} />
             <meshStandardMaterial
-              map={surfaceTex}
+              map={map ?? undefined}
               color={object.color}
               emissive={object.color}
-              emissiveIntensity={isHovered ? 1.1 : 0.78}
-              roughness={0.2} metalness={0.05}
+              emissiveMap={map ?? undefined}
+              emissiveIntensity={isHovered ? 1.15 : 0.85}
+              roughness={0.4} metalness={0}
             />
           </mesh>
-          {/* Solar flare / corona layers */}
+          {/* Pulsing corona glow sprite */}
+          <sprite ref={glowRef} scale={[5.4, 5.4, 1]}>
+            <spriteMaterial
+              map={glowTex}
+              color={object.color}
+              transparent
+              opacity={0.85}
+              depthWrite={false}
+              blending={THREE.AdditiveBlending}
+            />
+          </sprite>
+          {/* Prominence shells */}
           <mesh>
-            <sphereGeometry args={[baseRadius * 1.12, 24, 24]} />
-            <meshBasicMaterial color={object.color} transparent opacity={0.08} depthWrite={false} blending={THREE.AdditiveBlending} />
+            <sphereGeometry args={[baseRadius * 1.08, 32, 32]} />
+            <meshBasicMaterial color={object.color} transparent opacity={0.1} depthWrite={false} blending={THREE.AdditiveBlending} />
           </mesh>
           <mesh>
-            <sphereGeometry args={[baseRadius * 1.32, 18, 18]} />
+            <sphereGeometry args={[baseRadius * 1.25, 24, 24]} />
             <meshBasicMaterial color={object.atmosphereColor ?? object.color} transparent opacity={0.04} depthWrite={false} blending={THREE.AdditiveBlending} />
           </mesh>
           <mesh>
-            <sphereGeometry args={[baseRadius * 1.65, 14, 14]} />
+            <sphereGeometry args={[baseRadius * 1.55, 16, 16]} />
             <meshBasicMaterial color={object.color} transparent opacity={0.02} depthWrite={false} blending={THREE.AdditiveBlending} />
           </mesh>
         </>
@@ -366,63 +298,79 @@ export function FocusBody({ object }: FocusBodyProps) {
       {object.kind === "planet" && (
         <>
           <mesh ref={meshRef}>
-            <sphereGeometry args={[baseRadius, 48, 48]} />
+            <sphereGeometry args={[baseRadius, 64, 64]} />
             <meshStandardMaterial
-              map={surfaceTex}
-              bumpMap={bumpTex}
-              bumpScale={0.04}
+              map={map ?? undefined}
+              bumpMap={bumpMap ?? undefined}
+              bumpScale={bumpScale}
               color={object.color}
               emissive={object.color}
-              emissiveIntensity={isHovered ? 0.4 : 0.12}
-              roughness={object.roughness ?? 0.65}
-              metalness={object.metalness ?? 0.15}
+              emissiveIntensity={isHovered ? 0.35 : 0.1}
+              roughness={object.roughness ?? 0.7}
+              metalness={object.metalness ?? 0.1}
             />
           </mesh>
           {/* Wispy cloud layer */}
           <mesh ref={cloudRef}>
-            <sphereGeometry args={[baseRadius * 1.025, 32, 32]} />
+            <sphereGeometry args={[baseRadius * 1.03, 48, 48]} />
             <meshStandardMaterial
               color="#ffffff"
-              transparent opacity={0.06}
+              transparent opacity={0.07}
               depthWrite={false}
+              roughness={1}
             />
           </mesh>
           {/* Atmosphere */}
           <AtmosphereLayers radius={baseRadius} color={object.color} atmosphereColor={object.atmosphereColor} />
+          {/* Soft halo behind the planet */}
+          <sprite scale={[baseRadius * 3.2, baseRadius * 3.2, 1]}>
+            <spriteMaterial
+              map={glowTex}
+              color={object.color}
+              transparent
+              opacity={0.16}
+              depthWrite={false}
+              blending={THREE.AdditiveBlending}
+            />
+          </sprite>
           {/* Rings if opted-in */}
-          {object.hasRings && <FocusRings radius={baseRadius} color={object.color} />}
+          {object.hasRings && <FocusRings radius={baseRadius} color={object.color} seed={seed} />}
         </>
       )}
 
-      {/* ── Moon (function/class) ── */}
+      {/* ── Moon (function/class) — cratered sphere with relief ── */}
       {object.kind === "moon" && (
-        <mesh ref={meshRef}>
-          <octahedronGeometry args={[baseRadius, 3]} />
-          <meshStandardMaterial
-            map={surfaceTex}
-            bumpMap={bumpTex}
-            bumpScale={0.02}
-            color={object.color}
-            emissive={object.color}
-            emissiveIntensity={isHovered ? 0.35 : 0.05}
-            roughness={0.92}
-            metalness={0}
-          />
-        </mesh>
-      )}
-
-      {/* ── Corona / glow (all except moon) ── */}
-      {object.kind !== "moon" && (
-        <mesh>
-          <sphereGeometry args={[baseRadius * 1.6, 24, 24]} />
-          <meshBasicMaterial color={object.color} transparent opacity={0.05} depthWrite={false} blending={THREE.AdditiveBlending} />
-        </mesh>
+        <>
+          <mesh ref={meshRef}>
+            <sphereGeometry args={[baseRadius, 64, 64]} />
+            <meshStandardMaterial
+              map={map ?? undefined}
+              bumpMap={bumpMap ?? undefined}
+              bumpScale={bumpScale}
+              color={object.color}
+              emissive={object.color}
+              emissiveIntensity={isHovered ? 0.25 : 0.04}
+              roughness={0.95}
+              metalness={0}
+            />
+          </mesh>
+          <sprite scale={[baseRadius * 2.4, baseRadius * 2.4, 1]}>
+            <spriteMaterial
+              map={glowTex}
+              color={object.color}
+              transparent
+              opacity={0.12}
+              depthWrite={false}
+              blending={THREE.AdditiveBlending}
+            />
+          </sprite>
+        </>
       )}
 
       {/* ── Point light (illuminates children) ── */}
       <pointLight
-        intensity={object.kind === "moon" ? 0.4 : object.kind === "star" ? 2.2 : 1.4}
-        distance={object.kind === "star" ? 24 : 16}
+        intensity={object.kind === "moon" ? 0.4 : object.kind === "star" ? 2.4 : 1.4}
+        distance={object.kind === "star" ? 26 : 16}
         color={object.color}
       />
 

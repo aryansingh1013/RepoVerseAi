@@ -1,6 +1,7 @@
 import json
 from typing import Dict, Any, Optional
 from backend.skills.registry import skill_registry
+from backend.skills.utils import SkillLLMError
 
 class SkillManager:
     """
@@ -14,13 +15,13 @@ class SkillManager:
         print(f"SkillManager: Running skill '{slug}'...")
         try:
             return skill.execute(query, agent_graph, workspace_dir)
+        except SkillLLMError:
+            # Structured LLM failures must propagate so callers (API layer)
+            # can surface {error: {code, message}} — never swallow these (§11).
+            raise
         except Exception as e:
             print(f"SkillManager Error executing '{slug}': {e}")
-            return {
-                "error": f"Failed to execute skill workflow: {str(e)}",
-                "citations": [],
-                "confidence": 0.0
-            }
+            raise
 
     def export_report(self, slug: str, result: Dict[str, Any]) -> str:
         """

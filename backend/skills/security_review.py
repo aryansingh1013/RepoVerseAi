@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from backend.skills.base_skill import BaseSkill
 from backend.skills.registry import skill_registry
 from backend.skills.cache import get_cached, set_cached
-from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm
+from backend.skills.utils import scan_workspace, SKIP_DIRS, analyze_with_llm, SkillLLMError
 
 
 # Common high-risk patterns to scan for
@@ -109,21 +109,30 @@ class SecurityReviewSkill(BaseSkill):
         medium = sum(1 for v in vulns if v["severity"] == "MEDIUM")
         low = sum(1 for v in vulns if v["severity"] == "LOW")
 
-        # LLM for a brief summary (small, ~800 token prompt, cached afterwards)
+        # LLM for a brief summary (small, ~800 token prompt, cached afterwards).
+        # If the LLM is down the deterministic scan above is still real, useful
+        # output — degrade with a visible warning instead of failing everything.
         issue_text = f"{high} high, {medium} medium, {low} low severity issues."
         schema_hint = '{"summary": "string"}'
-        llm_result = analyze_with_llm(
-            "security",
-            f"write a 2-sentence security posture summary for a repository with {issue_text}",
-            schema_hint,
-            workspace_dir,
-        )
-        summary = llm_result.get("summary", f"Found {len(vulns)} potential security issues ({issue_text}).")
+        llm_warning = None
+        try:
+            llm_result = analyze_with_llm(
+                "security",
+                f"write a 2-sentence security posture summary for a repository with {issue_text}",
+                schema_hint,
+                workspace_dir,
+            )
+            summary = llm_result.get("summary") or f"Found {len(vulns)} potential security issues ({issue_text})."
+        except SkillLLMError as e:
+            llm_warning = f"LLM summary unavailable [{e.code}]: {e.message}"
+            summary = f"Found {len(vulns)} potential security issues ({issue_text})."
 
         result = {
             "vulnerabilities": vulns,
             "summary": summary,
         }
+        if llm_warning:
+            result["warnings"] = [llm_warning]
 
         set_cached("security", workspace_dir, result)
         return result

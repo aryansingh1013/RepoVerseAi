@@ -2,6 +2,11 @@ import os
 import time
 import yaml
 from typing import List, Dict, Any, Optional, Tuple
+
+# Imported at module scope so generate() can always resolve local model
+# settings (previously imported only inside load_provider_config, which
+# caused a NameError when generate() referenced settings.OLLAMA_DEFAULT_MODEL).
+from backend.core.config import settings
 from backend.llm.providers.base_provider import LLMResponse
 from backend.llm.task_router import task_router
 from backend.llm.provider_router import provider_router
@@ -9,8 +14,8 @@ from backend.llm.models.provider_registry import provider_registry, KeyInfo
 from backend.llm.models.routing_rules import select_api_key
 from backend.llm.models.model_registry import MODEL_REGISTRY
 
-# Default configuration parameters
-DEFAULT_FALLBACK_ORDER = ["groq", "openrouter", "openai", "gemini", "ollama"]
+# Default configuration parameters — local-first (Ollama), cloud as fallback
+DEFAULT_FALLBACK_ORDER = ["ollama", "groq", "openrouter", "openai", "gemini", "huggingface"]
 
 class ModelRouter:
     def __init__(self, provider_config_path: str):
@@ -58,7 +63,6 @@ class ModelRouter:
                 print(f"ModelRouter: Failed to load provider config from {self.provider_config_path}: {e}")
 
         # Inject environment variable keys as defaults loaded from settings/env
-        from backend.core.config import settings
         env_keys = {
             "groq": settings.GROQ_API_KEY,
             "openai": settings.OPENAI_API_KEY,
@@ -99,6 +103,13 @@ class ModelRouter:
         # De-duplicate fallback chain
         provider_fallback_chain = list(dict.fromkeys(provider_fallback_chain))
 
+        # Local-first policy: when a cloud provider is primary, local qwen
+        # (ollama) is the immediate fallback — e.g. chat (groq) falls back to
+        # qwen before trying any other cloud provider.
+        if start_provider != "ollama" and "ollama" in provider_fallback_chain:
+            provider_fallback_chain.remove("ollama")
+            provider_fallback_chain.insert(1, "ollama")
+
         last_error = "No provider attempted"
         
         # Try each provider in fallback sequence
@@ -110,9 +121,10 @@ class ModelRouter:
                 matches = [m for m, spec in MODEL_REGISTRY.items() if spec["provider"] == current_provider]
                 current_model = matches[0] if matches else "default"
             
-            # Resolve Ollama specific names
-            if current_provider == "ollama" and current_model == "default":
-                current_model = "qwen2.5"
+            # Resolve Ollama specific names — old configured names map to
+            # the configured local default (qwen3:8b)
+            if current_provider == "ollama" and current_model in ("default", "qwen2.5", ""):
+                current_model = settings.OLLAMA_DEFAULT_MODEL
 
             # Determine endpoint if Ollama
             endpoint = None

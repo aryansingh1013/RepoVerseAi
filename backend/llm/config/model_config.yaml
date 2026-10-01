@@ -1,19 +1,28 @@
 tasks:
-  repository_summary:
-    provider: "huggingface"
-    model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  # Chatbot — Groq first (fast cloud), local qwen as fallback
   chat:
     provider: "groq"
-    model: "llama-3.3-70b-versatile"
+    model: "openai/gpt-oss-20b"
+
+  # All other tasks stay local-first (Ollama qwen3:8b)
+  repository_summary:
+    provider: "ollama"
+    model: "qwen3:8b"
   code_review:
-    provider: "huggingface"
-    model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    provider: "ollama"
+    model: "qwen3:8b"
   architecture_summary:
-    provider: "huggingface"
-    model: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    provider: "ollama"
+    model: "qwen3:8b"
   tool_selection:
-    provider: "groq"
-    model: "llama-3.3-70b-versatile"
+    provider: "ollama"
+    model: "qwen3:8b"
   offline:
     provider: "ollama"
-    model: "qwen2.5"
+    model: "qwen3:8b"
+
+  # Used by skills (README generator, utils.generate). Pinned explicitly so it
+  # can never inherit chat's routing — skills must stay on local qwen.
+  analysis:
+    provider: "ollama"
+    model: "qwen3:8b"
