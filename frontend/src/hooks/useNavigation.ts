@@ -182,6 +182,29 @@ function buildSpaceGraphFromScan(scanData: any, theme: ThemeColors): SpaceObject
       metalness: 0.12,
       hasRings: index % 5 === 0,
     });
+
+    // Populate initial moons extracted from backend parser
+    if (planet.moons && Array.isArray(planet.moons)) {
+      planet.moons.forEach((sym: any, mIdx: number) => {
+        graph.push({
+          id: `moon-${filePath}-${sym.name}`,
+          kind: "moon",
+          name: sym.type === "class" ? `class ${sym.name}` : `${sym.name}()`,
+          parentId: planetId,
+          symbolType: sym.type,
+          symbolLine: sym.start_line,
+          symbolEndLine: sym.end_line,
+          symbolSummary: sym.summary || "",
+          position: { x: 0, y: 0, z: 0 },
+          scale: 0.2,
+          color: sym.type === "class" ? "#c084fc" : "#fbbf24",
+          orbitRadius: 2.2 + mIdx * 0.6,
+          orbitSpeed: 0.12 + 0.04 / (mIdx + 1),
+          inclination: ((mIdx % 3) - 1) * 0.25,
+          direction: mIdx % 2 === 0 ? 1 : -1,
+        });
+      });
+    }
   });
 
   return graph;

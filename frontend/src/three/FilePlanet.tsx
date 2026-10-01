@@ -22,19 +22,19 @@ function PlanetRingSystem({ radius, color }: { radius: number; color: string }) 
 
   useFrame((_, delta) => {
     if (ringMesh.current) {
-      ringMesh.current.rotation.z += delta * 0.03;
+      ringMesh.current.rotation.z += delta * 0.025;
     }
   });
 
   return (
     <mesh ref={ringMesh} rotation={[Math.PI / 2.3, 0.15, 0]}>
-      <ringGeometry args={[radius * 1.35, radius * 2.1, 64]} />
+      <ringGeometry args={[radius * 1.35, radius * 2.2, 64]} />
       <meshBasicMaterial
         map={ringTexture}
         color={color}
         side={THREE.DoubleSide}
         transparent
-        opacity={0.8}
+        opacity={0.85}
         depthWrite={false}
         blending={THREE.AdditiveBlending}
       />
@@ -55,23 +55,25 @@ function AtmosphereRim({
 }) {
   return (
     <>
+      {/* Inner atmospheric haze */}
       <mesh>
-        <sphereGeometry args={[radius * 1.08, 32, 32]} />
+        <sphereGeometry args={[radius * 1.07, 36, 36]} />
         <meshBasicMaterial
           color={atmosphereColor || color}
           transparent
-          opacity={0.12}
+          opacity={0.16}
           side={THREE.BackSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
+      {/* Outer fringe halo */}
       <mesh>
-        <sphereGeometry args={[radius * 1.2, 24, 24]} />
+        <sphereGeometry args={[radius * 1.18, 28, 28]} />
         <meshBasicMaterial
           color={color}
           transparent
-          opacity={0.05}
+          opacity={0.06}
           side={THREE.BackSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
@@ -113,7 +115,7 @@ export function FilePlanet({ planet }: FilePlanetProps) {
 
     if (meshRef.current) {
       // Axial self-rotation
-      meshRef.current.rotation.y += delta * 0.12;
+      meshRef.current.rotation.y += delta * 0.08;
 
       // Register live world position for CameraRig to fly to
       const worldPos = new THREE.Vector3();
@@ -126,15 +128,15 @@ export function FilePlanet({ planet }: FilePlanetProps) {
 
   return (
     <>
-      {/* Orbital track ring around central star */}
+      {/* Planetary orbital path ring around central star */}
       <OrbitRing
         radius={planet.orbitRadius}
         inclination={planet.inclination}
         color={planet.color}
-        opacity={0.14}
+        opacity={0.16}
       />
 
-      {/* Planet entity group */}
+      {/* Planet entity group (holds the planet body and its orbiting moons) */}
       <group ref={groupRef}>
         <mesh
           ref={meshRef}
@@ -154,18 +156,18 @@ export function FilePlanet({ planet }: FilePlanetProps) {
             hover(null);
           }}
         >
-          {/* Solid 3D spherical body */}
-          <sphereGeometry args={[planet.radius, 40, 40]} />
+          {/* Substantial, solid 3D spherical planet body */}
+          <sphereGeometry args={[planet.radius, 44, 44]} />
         </mesh>
 
         {/* Selection indicator ring */}
         {isSelected && (
           <mesh rotation={[Math.PI / 2.3, 0.2, 0]}>
-            <ringGeometry args={[planet.radius * 1.45, planet.radius * 1.68, 64]} />
+            <ringGeometry args={[planet.radius * 1.35, planet.radius * 1.55, 64]} />
             <meshBasicMaterial
               color="#38bdf8"
               transparent
-              opacity={0.85}
+              opacity={0.88}
               side={THREE.DoubleSide}
               depthWrite={false}
               blending={THREE.AdditiveBlending}
@@ -173,7 +175,7 @@ export function FilePlanet({ planet }: FilePlanetProps) {
           </mesh>
         )}
 
-        {/* Atmospheric halo */}
+        {/* Atmospheric halo glow */}
         <AtmosphereRim
           radius={planet.radius}
           color={planet.color}
@@ -187,18 +189,20 @@ export function FilePlanet({ planet }: FilePlanetProps) {
 
         {/* Floating Label on Hover */}
         {isHovered && (
-          <Html distanceFactor={10} position={[0, planet.radius + 0.5, 0]} occlude>
-            <div className="pointer-events-none whitespace-nowrap rounded-md bg-void-950/90 px-2.5 py-1.5 text-xs font-mono text-mist-100 border border-white/10 shadow-glow backdrop-blur-md">
-              <span className="mr-1.5 text-signal-400">📄</span>
-              <span className="font-semibold text-mist-100">{planet.name}</span>
-              <span className="ml-2 text-[10px] text-mist-400 font-mono">
-                {planet.directory !== "." && planet.directory !== "" ? `${planet.directory}/` : ""}
-              </span>
-              {planet.moons.length > 0 && (
-                <span className="ml-2 text-[10px] text-amber-400 font-medium">
-                  {planet.moons.length} moon{planet.moons.length > 1 ? "s" : ""}
-                </span>
-              )}
+          <Html distanceFactor={12} position={[0, planet.radius + 0.8, 0]} occlude>
+            <div className="pointer-events-none whitespace-nowrap rounded-lg bg-void-950/95 px-3 py-2 text-xs font-mono text-mist-100 border border-white/10 shadow-glow backdrop-blur-md">
+              <div className="flex items-center gap-1.5 font-bold">
+                <span className="text-signal-400">🪐</span>
+                <span className="text-mist-100">{planet.name}</span>
+              </div>
+              <div className="flex items-center gap-2 mt-0.5 text-[10px] text-mist-400">
+                <span>{planet.directory ? `${planet.directory}/` : "root"}</span>
+                {planet.moons.length > 0 && (
+                  <span className="text-amber-400 font-medium">
+                    • {planet.moons.length} moon{planet.moons.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
             </div>
           </Html>
         )}

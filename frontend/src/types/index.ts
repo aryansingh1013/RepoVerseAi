@@ -49,6 +49,8 @@ export interface SpaceObject {
   symbolType?: "function" | "class";
   /** Source line number (moons only) */
   symbolLine?: number;
+  /** End line number (moons only) */
+  symbolEndLine?: number;
   /** Symbol docstring summary (moons only) */
   symbolSummary?: string;
 }

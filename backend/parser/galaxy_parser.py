@@ -92,6 +92,17 @@ class GalaxyParser:
                     "exports": [],
                     "moons": []
                 }
+
+                if ext.lower() in {".py", ".ts", ".tsx", ".js", ".jsx"}:
+                    try:
+                        with open(file_path, "r", encoding="utf-8", errors="ignore") as pf:
+                            code_sample = pf.read(15000)
+                        analyzed = CodeAnalyzer.analyze(code_sample, rel_file_path)
+                        planet_node["moons"] = analyzed.get("symbols", [])[:8]
+                        planet_node["imports"] = analyzed.get("imports", [])[:10]
+                    except Exception:
+                        pass
+
                 star_node["planets"].append(planet_node)
                 
             # Save the star under the constellation

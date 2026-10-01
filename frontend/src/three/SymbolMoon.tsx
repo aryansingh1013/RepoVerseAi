@@ -55,12 +55,12 @@ export function SymbolMoon({ moon }: SymbolMoonProps) {
 
   return (
     <>
-      {/* Orbit track around parent planet */}
+      {/* Mini orbit track around parent planet */}
       <OrbitRing
         radius={moon.orbitRadius}
         inclination={moon.inclination}
         color={moon.color}
-        opacity={0.08}
+        opacity={0.14}
       />
 
       <group ref={groupRef}>
@@ -82,19 +82,31 @@ export function SymbolMoon({ moon }: SymbolMoonProps) {
             hover(null);
           }}
         >
-          {/* Solid 3D sphere geometry — NOT a particle */}
+          {/* Solid 3D spherical moon body (clearly smaller than planet) */}
           <sphereGeometry args={[moon.radius, 32, 32]} />
+        </mesh>
+
+        {/* Faint symbol glow shell */}
+        <mesh scale={1.25}>
+          <sphereGeometry args={[moon.radius, 16, 16]} />
+          <meshBasicMaterial
+            color={moon.color}
+            transparent
+            opacity={isHovered ? 0.25 : 0.1}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
         </mesh>
 
         {/* Selection indicator halo */}
         {isSelected && (
           <mesh rotation={[Math.PI / 2.5, 0, 0]}>
-            <ringGeometry args={[moon.radius * 1.35, moon.radius * 1.55, 32]} />
+            <ringGeometry args={[moon.radius * 1.4, moon.radius * 1.65, 32]} />
             <meshBasicMaterial
               color="#38bdf8"
               side={THREE.DoubleSide}
               transparent
-              opacity={0.85}
+              opacity={0.9}
               depthWrite={false}
               blending={THREE.AdditiveBlending}
             />
@@ -103,11 +115,13 @@ export function SymbolMoon({ moon }: SymbolMoonProps) {
 
         {/* Interactive Floating Label on Hover */}
         {isHovered && (
-          <Html distanceFactor={8} position={[0, moon.radius + 0.3, 0]} occlude>
-            <div className="pointer-events-none whitespace-nowrap rounded-md bg-void-950/90 px-2 py-1 text-[11px] font-mono text-mist-100 border border-white/10 shadow-glow backdrop-blur-md">
+          <Html distanceFactor={8} position={[0, moon.radius + 0.35, 0]} occlude>
+            <div className="pointer-events-none whitespace-nowrap rounded-md bg-void-950/95 px-2.5 py-1 text-[11px] font-mono text-mist-100 border border-white/10 shadow-glow backdrop-blur-md">
               <span className="mr-1.5 opacity-80">{icon}</span>
-              <span className="font-semibold">{moon.name}</span>
-              <span className="ml-1.5 text-[9px] text-mist-400">L{moon.lineStart}</span>
+              <span className="font-semibold text-amber-300">{moon.name}</span>
+              <span className="ml-1.5 text-[9px] text-mist-400">
+                {moon.type} • L{moon.lineStart}
+              </span>
             </div>
           </Html>
         )}

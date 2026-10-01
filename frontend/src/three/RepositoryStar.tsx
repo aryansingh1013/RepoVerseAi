@@ -12,6 +12,57 @@ interface RepositoryStarProps {
   repository: RepositoryNode;
 }
 
+// ─── Solar Flare / Prominence Particles ──────────────────────────────────────
+
+function SolarFlares({ radius, color }: { radius: number; color: string }) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const COUNT = 160;
+
+  const [positions, speeds] = useMemo(() => {
+    const pos = new Float32Array(COUNT * 3);
+    const spd = new Float32Array(COUNT);
+    for (let i = 0; i < COUNT; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const r = radius * (1.05 + Math.random() * 0.45);
+      pos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      pos[i * 3 + 2] = r * Math.cos(phi);
+      spd[i] = 0.2 + Math.random() * 0.5;
+    }
+    return [pos, spd];
+  }, [radius]);
+
+  useFrame(({ clock }, delta) => {
+    if (pointsRef.current) {
+      pointsRef.current.rotation.y += delta * 0.05;
+      pointsRef.current.rotation.z += delta * 0.02;
+      // Pulse scale
+      const pulse = 1.0 + Math.sin(clock.getElapsedTime() * 2) * 0.04;
+      pointsRef.current.scale.set(pulse, pulse, pulse);
+    }
+  });
+
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.18}
+        color={color}
+        transparent
+        opacity={0.8}
+        sizeAttenuation
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
+}
+
+// ─── Central Repository Star ─────────────────────────────────────────────────
+
 export function RepositoryStar({ repository }: RepositoryStarProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const coronaRef = useRef<THREE.Sprite>(null);
@@ -34,13 +85,13 @@ export function RepositoryStar({ repository }: RepositoryStarProps) {
     positionsRegistry.set(repository.id, 0, 0, 0);
 
     if (meshRef.current) {
-      meshRef.current.rotation.y += delta * 0.08;
+      meshRef.current.rotation.y += delta * 0.06;
     }
 
     // Subtle gentle breathing pulse on the corona glow
     if (coronaRef.current) {
-      const pulse = 1.0 + Math.sin(clock.getElapsedTime() * 1.5) * 0.05;
-      const baseScale = repository.radius * 4.6;
+      const pulse = 1.0 + Math.sin(clock.getElapsedTime() * 1.5) * 0.06;
+      const baseScale = repository.radius * 4.8;
       coronaRef.current.scale.set(baseScale * pulse, baseScale * pulse, 1);
     }
   });
@@ -49,17 +100,17 @@ export function RepositoryStar({ repository }: RepositoryStarProps) {
 
   return (
     <group position={[0, 0, 0]}>
-      {/* Central Omnidirectional Light illuminating the solar system */}
+      {/* Central Omnidirectional Solar Light illuminating planets & moons */}
       <pointLight
         position={[0, 0, 0]}
-        intensity={2.8}
-        distance={75}
+        intensity={3.8}
+        distance={95}
         color={repository.color}
       />
       <pointLight
         position={[0, 0, 0]}
-        intensity={1.0}
-        distance={35}
+        intensity={1.4}
+        distance={45}
         color="#ffffff"
       />
 
@@ -91,19 +142,22 @@ export function RepositoryStar({ repository }: RepositoryStarProps) {
           map={coronaTex}
           color={repository.color}
           transparent
-          opacity={0.85}
+          opacity={0.88}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </sprite>
 
-      {/* Faint Outer Corona Shell */}
-      <mesh scale={1.12}>
+      {/* Solar Prominence / Flare Particles */}
+      <SolarFlares radius={repository.radius} color="#ffedd5" />
+
+      {/* Outer Corona Atmosphere Shell */}
+      <mesh scale={1.14}>
         <sphereGeometry args={[repository.radius, 32, 32]} />
         <meshBasicMaterial
           color={repository.color}
           transparent
-          opacity={0.15}
+          opacity={0.16}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
@@ -112,7 +166,7 @@ export function RepositoryStar({ repository }: RepositoryStarProps) {
       {/* Selection indicator ring */}
       {isSelected && (
         <mesh rotation={[Math.PI / 2.4, 0, 0]}>
-          <ringGeometry args={[repository.radius * 1.5, repository.radius * 1.65, 64]} />
+          <ringGeometry args={[repository.radius * 1.4, repository.radius * 1.55, 64]} />
           <meshBasicMaterial
             color="#38bdf8"
             transparent
@@ -126,14 +180,14 @@ export function RepositoryStar({ repository }: RepositoryStarProps) {
 
       {/* Floating Label on Hover */}
       {isHovered && (
-        <Html distanceFactor={14} position={[0, repository.radius + 0.9, 0]} occlude>
-          <div className="pointer-events-none whitespace-nowrap rounded-lg bg-void-950/95 px-3 py-2 text-xs font-mono text-mist-100 border border-amber-500/30 shadow-2xl backdrop-blur-md">
-            <div className="flex items-center gap-1.5 font-bold text-amber-400">
+        <Html distanceFactor={16} position={[0, repository.radius + 1.2, 0]} occlude>
+          <div className="pointer-events-none whitespace-nowrap rounded-xl bg-void-950/95 px-3.5 py-2.5 text-xs font-mono text-mist-100 border border-amber-500/30 shadow-2xl backdrop-blur-md">
+            <div className="flex items-center gap-2 font-bold text-amber-400 text-sm">
               <span>⭐</span>
               <span>{repository.name}</span>
             </div>
-            <div className="text-[10px] text-mist-400 mt-0.5">
-              Central Star • {repository.fileCount} file planets
+            <div className="text-[11px] text-mist-400 mt-1 font-mono">
+              Central Star • {repository.fileCount} File Planets
             </div>
           </div>
         </Html>
